@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test data (large files)
+test_data/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Database
+*.db
+*.sqlite3
+
+# Model weights (large files - download separately)
+*.pth
+*.pt
+*.bin
+*.safetensors
+*.ckpt
+
+# Data files (large)
+*.csv
+*.parquet
+*.pkl
+*.npy
+*.npz
+
+# But keep example/config files
+!.env.example
+!requirements.txt
+!docs-requirements.txt
+
+# THETA specific
+THETA_3.17/data/
+THETA_3.17/result/
+THETA_3.17/logs/
+THETA_3.17/.git/
+tgres*
+# .env - 用户要求推送包含该文件，移除忽略
+# .env

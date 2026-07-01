@@ -1,0 +1,75 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*.bak
+*.bak*
+*.bak_*
+*.orig
+*.rej
+
+# Environment and secrets
+.env
+.env.*
+*.local
+!.env.example
+
+# Node / frontend build output
+node_modules/
+.next/
+out/
+build/
+dist/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+.pnpm-debug.log*
+theta.code-soul.com/.well-known/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Runtime logs and local databases
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated data, model weights, and training output
+theta_project/data/
+theta_project/users/
+theta_project/THETA/data/
+theta_project/THETA/models/
+theta_project/THETA/result/
+theta_project/THETA/logs/
+*.csv
+*.parquet
+*.pkl
+*.npy
+*.npz
+*.pth
+*.pt
+*.bin
+*.safetensors
+*.ckpt
+
+# Keep lightweight examples and templates
+!theta_project/THETA/data/.gitkeep
+!theta_project/THETA/data/example/
+!theta_project/THETA/data/example/**
+!theta_project/THETA/models/.gitkeep
+!theta_project/THETA/result/.gitkeep

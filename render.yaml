@@ -1,0 +1,45 @@
+services:
+  - type: web
+    name: theta-api
+    runtime: docker
+    rootDir: theta_project
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: API_BASE_URL
+        sync: false
+      - key: STORAGE_PROVIDER
+        value: r2
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_PUBLIC_BASE_URL
+        sync: false
+      - key: GPU_PROVIDER
+        value: modal_http
+      - key: GPU_TRAINING_ENDPOINT
+        sync: false
+      - key: GPU_TRAINING_TOKEN
+        sync: false
+      - key: EMBEDDING_PROVIDER
+        value: cloud
+      - key: EMBEDDING_CLOUD_PROVIDER
+        value: openai
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: OPENAI_API_KEY
+        sync: false

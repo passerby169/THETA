@@ -1,0 +1,32 @@
+# Core FastAPI dependencies
+fastapi>=0.104.0
+uvicorn>=0.24.0
+sqlalchemy>=1.4.41
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.6
+pydantic[email]>=2.5.0
+python-dotenv>=1.0.0
+
+# PostgreSQL driver
+psycopg2-binary>=2.9.9
+
+# Queue and object storage
+redis>=5.0.0
+boto3>=1.34.0
+botocore>=1.34.0
+
+# Alibaba Cloud OSS
+oss2>=2.17.0
+
+# DashScope AI
+dashscope>=1.14.0
+requests>=2.31.0
+
+# Cloud Provider Config
+PyYAML>=6.0
+
+# Alibaba DLC SDK (for PAI-DLC training)
+alibabacloud-pai-dlc20201203>=1.0.0
+alibabacloud-sts20150401>=1.0.0
+alibabacloud-tea-openapi>=1.0.0

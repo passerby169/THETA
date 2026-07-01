@@ -1,0 +1,580 @@
+# =============================================================================
+# THETA API 端点配置
+# =============================================================================
+# 用途: 前后端接口路径统一配置，支持多环境切换
+# 前端通过 lib/api/endpoints-config.ts 引用此配置
+# 后端通过 config/api_endpoints.yaml 生成 API 文档
+#
+# 使用方式:
+#   - 前端: import { API_ENDPOINTS } from '@/lib/api/endpoints-config'
+#   - 后端: 直接引用此配置文件，或参考此文件编写 docs/API.md
+#
+# 路径参数格式: {param_name} — 前端通过 buildUrl() 函数替换
+# =============================================================================
+
+base_url:
+  # 开发环境（本地后端）
+  development: "http://localhost:8000"
+  # 生产环境（线上后端）
+  production: "https://theta.code-soul.com"
+  # 备用环境（阿里云香港）
+  backup: "http://47.86.49.93:8000"
+
+endpoints:
+  # --------------------------------------------------------------------------
+  # 认证模块 /api/auth/*
+  # --------------------------------------------------------------------------
+  auth:
+    register:
+      method: "POST"
+      path: "/api/auth/register"
+      auth_required: false
+      description: "用户注册"
+      request_body: |
+        {
+          "username": "string",
+          "email": "user@example.com",
+          "password": "string"
+        }
+      response: |
+        {
+          "id": 1,
+          "username": "string",
+          "email": "string",
+          "is_active": true
+        }
+
+    login:
+      method: "POST"
+      path: "/api/auth/login"
+      auth_required: false
+      description: "用户登录，返回 JWT Token"
+      request_body: "form-urlencoded: username, password"
+      response: |
+        {
+          "access_token": "eyJ...",
+          "token_type": "bearer"
+        }
+
+    me:
+      method: "GET"
+      path: "/api/auth/me"
+      auth_required: true
+      description: "获取当前登录用户信息"
+      response: |
+        {
+          "id": 1,
+          "username": "string",
+          "email": "string",
+          "is_active": true
+        }
+
+  # --------------------------------------------------------------------------
+  # 文件上传模块 /api/upload/*
+  # --------------------------------------------------------------------------
+  upload:
+    file:
+      method: "POST"
+      path: "/api/upload"
+      auth_required: true
+      description: "上传文件到后端本地存储"
+      request_body: "multipart/form-data: file"
+      response: |
+        {
+          "id": 1,
+          "filename": "data.csv",
+          "file_path": "/path/to/file",
+          "file_type": "uploads",
+          "created_at": "2026-04-25T10:00:00Z"
+        }
+
+    test:
+      method: "POST"
+      path: "/api/upload/test"
+      auth_required: false
+      description: "测试上传接口（使用内置测试用户，无需认证）"
+      request_body: "multipart/form-data: file"
+      response: |
+        {
+          "id": 1,
+          "filename": "string",
+          "file_path": "string",
+          "file_type": "uploads",
+          "created_at": "2026-04-25T10:00:00Z"
+        }
+
+    complete:
+      method: "POST"
+      path: "/api/upload/complete"
+      auth_required: true
+      description: "前端直传 OSS 完成后，通知后端记录文件信息"
+      request_body: |
+        {
+          "dataset_name": "string",
+          "filename": "string",
+          "oss_path": "raw_data/username/dataset/file.csv",
+          "file_size": 1024000
+        }
+      response: |
+        {
+          "id": 1,
+          "filename": "string",
+          "file_path": "raw_data/username/dataset/file.csv",
+          "file_type": "oss_upload",
+          "created_at": "2026-04-25T10:00:00Z"
+        }
+
+    files:
+      method: "GET"
+      path: "/api/files"
+      auth_required: true
+      description: "获取当前用户上传的所有文件列表"
+      response: |
+        [
+          {
+            "id": 1,
+            "filename": "string",
+            "file_path": "raw_data/username/dataset/file.csv",
+            "file_type": "oss_upload",
+            "created_at": "2026-04-25T10:00:00Z",
+            "dataset_name": "dataset"
+          }
+        ]
+
+    sts_token:
+      method: "GET"
+      path: "/api/oss/sts-token"
+      auth_required: true
+      description: "获取 STS 临时凭证（前端直传 OSS 用）"
+      query_params: "dataset_name: string"
+      response: |
+        {
+          "credentials": {
+            "access_key_id": "string",
+            "access_key_secret": "string",
+            "security_token": "string",
+            "expiration": "2026-04-25T12:00:00Z"
+          },
+          "upload_path": "raw_data/username/dataset/",
+          "bucket": "theta-prod-20260123",
+          "endpoint": "oss-cn-shanghai.aliyuncs.com",
+          "region": "cn-shanghai"
+        }
+
+  # --------------------------------------------------------------------------
+  # 预处理模块 /api/preprocessing/*
+  # --------------------------------------------------------------------------
+  preprocessing:
+    check:
+      method: "GET"
+      path: "/api/preprocessing/check/{dataset}"
+      auth_required: true
+      description: "检查数据集的预处理状态（BOW 和嵌入是否已生成）"
+      response: |
+        {
+          "dataset": "string",
+          "has_bow": true,
+          "has_embeddings": true,
+          "ready_for_training": true,
+          "bow_path": "raw_data/username/dataset/workspace/bow_matrix.npy",
+          "embedding_path": "raw_data/username/dataset/workspace/embeddings.npy",
+          "vocab_path": "raw_data/username/dataset/workspace/vocab.json"
+        }
+
+    start:
+      method: "POST"
+      path: "/api/preprocessing/start"
+      auth_required: true
+      description: "启动预处理任务"
+      request_body: |
+        {
+          "dataset": "string",
+          "text_column": "content"
+        }
+      response: |
+        {
+          "job_id": "prep_abc123",
+          "dataset": "string",
+          "status": "completed",
+          "progress": 100
+        }
+
+    job:
+      method: "GET"
+      path: "/api/preprocessing/{job_id}"
+      auth_required: true
+      description: "获取预处理任务状态"
+      response: |
+        {
+          "job_id": "prep_abc123",
+          "dataset": "string",
+          "status": "completed",
+          "progress": 100,
+          "message": "预处理已完成"
+        }
+
+  # --------------------------------------------------------------------------
+  # 训练任务模块 /api/train/*
+  # --------------------------------------------------------------------------
+  training:
+    start:
+      method: "POST"
+      path: "/api/train/start"
+      auth_required: true
+      description: "提交 DLC 训练任务"
+      request_body: |
+        {
+          "file_id": 1,
+          "dataset_name": "my_dataset",
+          "model_type": "theta",
+          "model_size": "0.6B",
+          "mode": "zero_shot",
+          "num_topics": 20,
+          "epochs": 100,
+          "batch_size": 64,
+          "learning_rate": 0.002,
+          "hidden_dim": 512,
+          "patience": 10,
+          "vocab_size": 5000,
+          "language": "chinese"
+        }
+      response: |
+        {
+          "id": 1,
+          "user_id": 1,
+          "status": "running",
+          "dlc_job_id": "DLC-123456",
+          "created_at": "2026-04-25T10:00:00Z"
+        }
+
+    status:
+      method: "GET"
+      path: "/api/train/{job_id}/status"
+      auth_required: true
+      description: "查询训练任务实时状态"
+      response: |
+        {
+          "job_id": 1,
+          "status": "running",
+          "dlc_job_id": "DLC-123456",
+          "message": "训练进行中",
+          "created_at": "2026-04-25T10:00:00Z",
+          "error_message": null
+        }
+
+    metrics:
+      method: "GET"
+      path: "/api/train/{job_id}/metrics"
+      auth_required: true
+      description: "获取训练过程的指标数据（loss/accuracy 曲线）"
+      response: |
+        {
+          "job_id": 1,
+          "status": "running",
+          "epochs": [1, 2, 3, ...],
+          "loss": [2.5, 2.1, 1.8, ...],
+          "accuracy": [0.3, 0.45, 0.6, ...]
+        }
+
+    summary:
+      method: "GET"
+      path: "/api/train/{job_id}/summary"
+      auth_required: true
+      description: "获取训练完成后的模型摘要"
+      response: |
+        {
+          "job_id": 1,
+          "status": "succeeded",
+          "summary": "训练完成，最终 Loss: 0.85，Accuracy: 0.78"
+        }
+
+    jobs:
+      method: "GET"
+      path: "/api/train/jobs"
+      auth_required: true
+      description: "获取当前用户的所有训练任务列表"
+      response: |
+        [
+          {
+            "id": 1,
+            "user_id": 1,
+            "status": "succeeded",
+            "dlc_job_id": "DLC-123456",
+            "created_at": "2026-04-25T10:00:00Z"
+          }
+        ]
+
+    callback:
+      method: "POST"
+      path: "/api/train/callback"
+      auth_required: false
+      description: "DLC 训练脚本完成后回调通知（需要 SECRET_KEY 校验）"
+      request_body: |
+        {
+          "job_id": 1,
+          "status": "succeeded",
+          "secret_key": "theta-at-2026-production-key"
+        }
+      response: |
+        {
+          "success": true,
+          "message": "Job 1 status updated to succeeded"
+        }
+
+  # --------------------------------------------------------------------------
+  # 数据查询模块 /api/data/* 和 /api/results/*
+  # --------------------------------------------------------------------------
+  data:
+    oss_datasets:
+      method: "GET"
+      path: "/api/data/oss-datasets"
+      auth_required: true
+      description: "获取有可视化结果的数据集列表"
+      response: |
+        {
+          "datasets": [
+            {"name": "my_dataset", "chart_count": 5}
+          ]
+        }
+
+    results_models:
+      method: "GET"
+      path: "/api/results/{dataset}/models"
+      auth_required: true
+      description: "获取该数据集下所有有结果的模型"
+      response: |
+        {
+          "dataset": "my_dataset",
+          "models": ["theta", "lda", "bertopic"]
+        }
+
+    topic_words:
+      method: "GET"
+      path: "/api/results/{dataset}/topic-words"
+      auth_required: true
+      description: "获取主题词列表"
+      query_params: "model: theta (default)"
+      response: |
+        {
+          "dataset": "my_dataset",
+          "model": "theta",
+          "topics": {
+            "0": [["word1", 0.85], ["word2", 0.72], ...],
+            "1": [["word1", 0.90], ...]
+          }
+        }
+
+    metrics:
+      method: "GET"
+      path: "/api/results/{dataset}/metrics"
+      auth_required: true
+      description: "获取评估指标（7 项标准指标）"
+      query_params: "model: theta (default)"
+      response: |
+        {
+          "dataset": "my_dataset",
+          "model": "theta",
+          "metrics": {
+            "TD": 0.85,
+            "iRBO": 0.72,
+            "NPMI": 0.65,
+            "C_V": 0.58,
+            "UMass": 0.42,
+            "Exclusivity": 0.91,
+            "PPL": 38.5
+          }
+        }
+
+    visualizations:
+      method: "GET"
+      path: "/api/results/{dataset}/visualizations"
+      auth_required: true
+      description: "获取可视化文件列表（global + per-topic）"
+      query_params: "model: theta (default)"
+      response: |
+        {
+          "dataset": "my_dataset",
+          "model": "theta",
+          "global_files": [
+            {"name": "topic_distribution.png", "path": "global/topic_distribution.png", "url": "...", "size": 102400, "type": "global"}
+          ],
+          "topic_files": {
+            "0": [{"name": "wordcloud.png", "path": "topic/topic_0/wordcloud.png", "url": "...", "size": 51200, "type": "topic"}]
+          }
+        }
+
+    visualization_file:
+      method: "GET"
+      path: "/api/results/{dataset}/visualizations/file"
+      auth_required: true
+      description: "通过后端代理获取可视化文件内容（解决 CORS）"
+      query_params: "path: string, model: theta (default)"
+
+    visualization_image:
+      method: "GET"
+      path: "/api/results/{dataset}/visualizations/image"
+      auth_required: true
+      description: "获取可视化图片（二进制，用于 AI 分析）"
+      query_params: "path: string, model: theta (default)"
+
+  # --------------------------------------------------------------------------
+  # AI 对话模块 /api/agent/* 和 /api/chat/*
+  # --------------------------------------------------------------------------
+  chat:
+    send:
+      method: "POST"
+      path: "/api/agent/chat"
+      auth_required: false
+      description: "AI 对话（支持多模态）"
+      request_body: |
+        {
+          "message": "分析一下这个数据集的主题分布",
+          "session_id": "default",
+          "context": {"current_page": "dashboard"},
+          "images": [{"name": "chart.png", "mimeType": "image/png", "size": 51200, "dataUrl": "data:image/png;base64,..."}],
+          "files": []
+        }
+      response: |
+        {
+          "message": "根据分析，您的数据集包含 5 个主要主题...",
+          "thinking": null
+        }
+
+    history:
+      method: "GET"
+      path: "/api/chat/history/{session_id}"
+      auth_required: true
+      description: "获取会话历史"
+      response: |
+        {
+          "messages": [
+            {"id": 1, "role": "user", "content": "分析一下", "session_id": "default", "created_at": "2026-04-25T10:00:00Z"},
+            {"id": 2, "role": "ai", "content": "好的，我来帮您分析...", "session_id": "default", "created_at": "2026-04-25T10:00:01Z"}
+          ]
+        }
+
+  # --------------------------------------------------------------------------
+  # 结果解读模块 /api/interpret/*
+  # --------------------------------------------------------------------------
+  interpret:
+    metrics:
+      method: "POST"
+      path: "/api/interpret/metrics"
+      auth_required: true
+      description: "AI 解读评估指标"
+      request_body: |
+        {
+          "job_id": "1",
+          "language": "zh",
+          "use_llm": true
+        }
+      response: |
+        {
+          "success": true,
+          "message": "指标解读完成",
+          "data": {"job_id": "1", "interpretation": "TD=0.85 表明主题多样性较高..."}
+        }
+
+    topics:
+      method: "POST"
+      path: "/api/interpret/topics"
+      auth_required: true
+      description: "AI 解读主题语义"
+      request_body: |
+        {
+          "job_id": "1",
+          "language": "zh"
+        }
+      response: |
+        {
+          "success": true,
+          "message": "主题解读完成",
+          "data": {"job_id": "1", "interpretation": null}
+        }
+
+    summary:
+      method: "POST"
+      path: "/api/interpret/summary"
+      auth_required: true
+      description: "AI 生成分析摘要"
+      request_body: |
+        {
+          "job_id": "1",
+          "language": "zh"
+        }
+      response: |
+        {
+          "success": true,
+          "message": "摘要生成完成",
+          "data": {"job_id": "1", "summary": null}
+        }
+
+  # --------------------------------------------------------------------------
+  # 图表分析模块 /api/vision/*
+  # --------------------------------------------------------------------------
+  vision:
+    analyze_chart:
+      method: "POST"
+      path: "/api/vision/analyze-chart"
+      auth_required: true
+      description: "使用 Qwen-VL 分析可视化图表"
+      request_body: |
+        {
+          "job_id": "1",
+          "chart_name": "wordcloud.png",
+          "chart_url": "https://...",
+          "analysis_type": "topic-word",
+          "language": "zh"
+        }
+      response: |
+        {
+          "success": true,
+          "message": "分析完成",
+          "data": {"analysis": "此主题主要涉及产品评价和质量相关词汇..."}
+        }
+
+  # --------------------------------------------------------------------------
+  # 数据集管理 /api/datasets/*
+  # --------------------------------------------------------------------------
+  datasets:
+    delete:
+      method: "DELETE"
+      path: "/api/datasets/{dataset}"
+      auth_required: true
+      description: "删除数据集（同时删除 OSS 和数据库记录）"
+      response: |
+        {
+          "success": true,
+          "message": "数据集 my_dataset 已删除"
+        }
+
+  # --------------------------------------------------------------------------
+  # 系统接口
+  # --------------------------------------------------------------------------
+  system:
+    health:
+      method: "GET"
+      path: "/health"
+      auth_required: false
+      description: "健康检查接口"
+      response: |
+        {
+          "status": "ok",
+          "provider": "aliyun",
+          "details": {
+            "oss": {"status": "ok", "bucket": "theta-prod-20260123"},
+            "dlc": {"status": "ok"}
+          }
+        }
+
+    docs:
+      method: "GET"
+      path: "/docs"
+      auth_required: false
+      description: "Swagger API 文档"
+
+    redoc:
+      method: "GET"
+      path: "/redoc"
+      auth_required: false
+      description: "ReDoc API 文档"

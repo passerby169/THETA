@@ -1,0 +1,179 @@
+# =============================================================================
+# 云服务商配置文件
+# =============================================================================
+# 用途: 所有云服务连接配置统一管理，支持多云切换
+# 优先级: YAML 配置 > .env 环境变量
+# 敏感值使用 ${ENV_VAR} 语法引用环境变量（容器启动时会被替换为实际值）
+#
+# 新增云服务商（如 AWS / 腾讯云）：
+#   1. 在 providers 下添加新配置块，结构与 aliyun 相同
+#   2. 设置 enabled: false 默认
+#   3. 将 active_provider 改为新云服务商名称即可切换
+# =============================================================================
+
+providers:
+  # --------------------------------------------------------------------------
+  # 阿里云 (Aliyun) - 当前主要云服务商
+  # --------------------------------------------------------------------------
+  aliyun:
+    enabled: true
+    region: cn-shanghai
+    provider_name: "aliyun"
+
+    # 凭证配置（生产环境建议使用 RAM 凭证或 STS 临时凭证）
+    credentials:
+      access_key_id: "${ALIBABA_CLOUD_ACCESS_KEY_ID}"
+      access_key_secret: "${ALIBABA_CLOUD_ACCESS_KEY_SECRET}"
+
+    # OSS 对象存储配置
+    oss:
+      bucket: "${OSS_BUCKET_NAME}"
+      endpoint: "${OSS_ENDPOINT}"
+      # 内网 endpoint（容器内访问 OSS 使用内网，节省流量费用）
+      internal_endpoint: "${OSS_ENDPOINT_INTERNAL:-oss-cn-shanghai-internal.aliyuncs.com}"
+      # OSS 路径前缀配置（可按需调整）
+      paths:
+        code: "code/"
+        models: "models/"
+        raw_data: "raw_data/"
+        results: "results/"
+
+    # PAI 机器学习平台配置
+    pai:
+      workspace_id: "${PAI_WORKSPACE_ID}"
+      dlc_endpoint: "pai-dlc.cn-shanghai.aliyuncs.com"
+
+    # DLC (Deep Learning Container) 训练配置
+    dlc:
+      # 默认 GPU 算例规格
+      default_ecs_spec: "ecs.gn7i-c8g1.2xlarge"
+      # 默认镜像（包含 PyTorch + CUDA）
+      default_image: "dsw-registry-vpc.cn-shanghai.cr.aliyuncs.com/pai/pytorch-training:2.7-gpu-py312-cu128-ubuntu24.04"
+      # 可选 GPU 算例列表（前端可展示给用户选择）
+      available_ecs_specs:
+        - name: "A10 (推荐)"
+          spec: "ecs.gn7i-c8g1.2xlarge"
+          gpu: "A10 x1"
+          vram: "24GB"
+          vcpu: 8
+          description: "性价比高，支持资源包抵扣，适合大多数训练任务"
+        - name: "V100-16G"
+          spec: "ecs.gn6v-c8g1.2xlarge"
+          gpu: "V100 x1"
+          vram: "16GB"
+          vcpu: 8
+          description: "经典 V100，适合对稳定性有要求的任务"
+        - name: "V100-32G"
+          spec: "ecs.gn6e-c12g1.3xlarge"
+          gpu: "V100 x1"
+          vram: "32GB"
+          vcpu: 12
+          description: "大显存，适合大模型或大批量数据训练"
+        - name: "A100"
+          spec: "ecs.gn7-c16g1.4xlarge"
+          gpu: "A100 x1"
+          vram: "40GB"
+          vcpu: 16
+          description: "最新一代 GPU，适合极限性能需求"
+
+  # --------------------------------------------------------------------------
+  # AWS (预留，暂未启用)
+  # --------------------------------------------------------------------------
+  aws:
+    enabled: false
+    region: us-east-1
+    provider_name: "aws"
+
+    credentials:
+      access_key_id: "${AWS_ACCESS_KEY_ID}"
+      access_key_secret: "${AWS_ACCESS_KEY_SECRET}"
+      # 可选：使用 STS 临时凭证
+      # sts_role_arn: "${AWS_STS_ROLE_ARN}"
+
+    # S3 配置
+    s3:
+      bucket: "${AWS_S3_BUCKET}"
+      endpoint: "${AWS_S3_ENDPOINT:-s3.us-east-1.amazonaws.com}"
+      region: "us-east-1"
+
+    # SageMaker 配置
+    sagemaker:
+      role_arn: "${AWS_SAGEMAKER_ROLE_ARN}"
+      region: "us-east-1"
+
+    training:
+      default_instance_type: "ml.g4dn.xlarge"
+      default_image: "763104351884.dkr.ecr.us-east-1.amazonaws.com/pytorch-training:2.0.1-gpu-py310-cu118-ubuntu20.04"
+      available_instance_types:
+        - name: "T4 (性价比)"
+          spec: "ml.g4dn.xlarge"
+          gpu: "T4 x1"
+          vram: "16GB"
+          vcpu: 4
+        - name: "V100"
+          spec: "ml.p3.2xlarge"
+          gpu: "V100 x1"
+          vram: "16GB"
+          vcpu: 8
+        - name: "A100"
+          spec: "ml.p4d.24xlarge"
+          gpu: "A100 x8"
+          vram: "320GB"
+          vcpu: 96
+
+  # --------------------------------------------------------------------------
+  # 腾讯云 (预留，暂未启用)
+  # --------------------------------------------------------------------------
+  tencent:
+    enabled: false
+    region: ap-shanghai
+    provider_name: "tencent"
+
+    credentials:
+      secret_id: "${TENCENT_SECRET_ID}"
+      secret_key: "${TENCENT_SECRET_KEY}"
+
+    cos:
+      bucket: "${TENCENT_COS_BUCKET}"
+      region: "ap-shanghai"
+
+    training:
+      default_instance_type: "GN10Xp.2XLARGE40"
+      default_image: "ccr.ccs.tencentyun.com/pytorch-training/pytorch:2.0.1-cuda11.7-cudnn8-runtime"
+
+  # --------------------------------------------------------------------------
+  # 华为云 (预留，暂未启用)
+  # --------------------------------------------------------------------------
+  huawei:
+    enabled: false
+    region: cn-east-3
+    provider_name: "huawei"
+
+    credentials:
+      access_key: "${HUAWEI_ACCESS_KEY}"
+      secret_key: "${HUAWEI_SECRET_KEY}"
+      project_id: "${HUAWEI_PROJECT_ID}"
+
+    obs:
+      bucket: "${HUAWEI_OBS_BUCKET}"
+      endpoint: "${HUAWEI_OBS_ENDPOINT:-obs.cn-east-3.myhuaweicloud.com}"
+
+    training:
+      default_instance_type: "modelarts.g1.xlarge"
+      default_image: "modelarts.torch.2.0.0-py310-cuda11.7-ubuntu20.04"
+
+# =============================================================================
+# 全局配置
+# =============================================================================
+
+# 当前激活的云服务商（切换时只需修改此行）
+active_provider: aliyun
+
+# 默认日志级别
+log_level: INFO
+
+# API 回调地址（DLC 训练完成后回调此地址通知训练结果）
+api_base_url: "${API_BASE_URL:-http://localhost:8000}"
+
+# 回调密钥（用于校验 DLC 回调请求的合法性）
+callback_secret: "${CALLBACK_SECRET:-default-secret}"

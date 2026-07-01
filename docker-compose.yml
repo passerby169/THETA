@@ -1,0 +1,82 @@
+version: '3.8'
+
+# --------------------------------------------------------------------------
+# THETA 前后端本地开发环境
+#
+# 使用方法:
+#   cp .env.example .env      # 复制并配置环境变量
+#   docker-compose up          # 启动所有服务
+#
+# 环境变量（.env 中配置）:
+#   POSTGRES_USER=theta_user
+#   POSTGRES_PASSWORD=theta_pass
+# --------------------------------------------------------------------------
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: theta-postgres
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      POSTGRES_DB: theta
+      POSTGRES_USER: ${POSTGRES_USER:-theta_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-theta_pass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-theta_user} -d theta"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: theta-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./theta_project
+      dockerfile: Dockerfile
+    container_name: theta-backend
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-theta_user}:${POSTGRES_PASSWORD:-theta_pass}@postgres:5432/theta
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-r2}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./theta_project:/app
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./theta.code-soul.com
+      dockerfile: Dockerfile
+    container_name: theta-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_DATACLEAN_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
