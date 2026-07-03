@@ -232,16 +232,14 @@ export const AuthAPI = {
 
 
 
-  
- async sendVerificationCode(data: SendCodeRequest): Promise<{ message: string }> {
-  return { message: '验证码已发送，测试阶段可输入任意 6 位数字' };
-},
+  async sendVerificationCode(data: SendCodeRequest): Promise<{ message: string }> {
+    return { message: '验证码已发送，测试阶段可输入任意 6 位数字' };
+  },
 
-async verifyCode(data: VerifyCodeRequest): Promise<{ valid: boolean }> {
-  return { valid: true };
-},
+  async verifyCode(data: VerifyCodeRequest): Promise<{ valid: boolean }> {
+    return { valid: true };
+  },
+};
 
-
-
-  
 export default AuthAPI;
+
