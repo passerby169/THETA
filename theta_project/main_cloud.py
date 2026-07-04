@@ -672,20 +672,24 @@ def get_training_jobs(current_user: User = Depends(get_current_user), db: Sessio
 
 @app.get("/api/data/oss-datasets")
 def list_datasets(current_user: User = Depends(get_current_user)):
-    base = f"results/{current_user.username}/"
-    datasets = []
-    for entry in storage.list_objects(base, delimiter="/"):
-        if not entry.is_prefix:
-            continue
-        dataset = entry.key[len(base):].strip("/")
-        chart_count = sum(
-            1
-            for obj in storage.list_objects(entry.key)
-            if obj.key.lower().endswith((".png", ".jpg", ".jpeg")) and "visualization" in obj.key.lower()
-        )
-        if chart_count > 0:
-            datasets.append({"name": dataset, "chart_count": chart_count})
-    return {"datasets": sorted(datasets, key=lambda item: item["name"])}
+    try:
+        base = f"results/{current_user.username}/"
+        datasets = []
+        for entry in storage.list_objects(base, delimiter="/"):
+            if not entry.is_prefix:
+                continue
+            dataset = entry.key[len(base):].strip("/")
+            chart_count = sum(
+                1
+                for obj in storage.list_objects(entry.key)
+                if obj.key.lower().endswith((".png", ".jpg", ".jpeg")) and "visualization" in obj.key.lower()
+            )
+            if chart_count > 0:
+                datasets.append({"name": dataset, "chart_count": chart_count})
+        return {"datasets": sorted(datasets, key=lambda item: item["name"])}
+    except Exception as exc:
+        print(f"Failed to list datasets: {exc}")
+        return {"datasets": []}
 
 
 @app.get("/api/results/{dataset}/models")
