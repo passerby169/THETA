@@ -51,6 +51,7 @@ export function ColumnSelectPanel({
   const [columns, setColumns] = useState<string[]>([])
   const [rows, setRows] = useState<string[][]>([])
   const [loading, setLoading] = useState(false)
+  const [previewError, setPreviewError] = useState("")
   const [textColumn, setTextColumn] = useState("")
   const [metaColumns, setMetaColumns] = useState<string[]>([])
   const [removeUrl, setRemoveUrl] = useState(true)
@@ -64,6 +65,7 @@ export function ColumnSelectPanel({
   useEffect(() => {
     if (!open || !datasetName) return
     setLoading(true)
+    setPreviewError("")
     ETMAgentAPI.getDatasetPreview(datasetName, jobId ?? undefined)
       .then(({ columns: c, rows: r }) => {
         setColumns(c)
@@ -75,7 +77,12 @@ export function ColumnSelectPanel({
           setTextColumn(preferred || c[0])
         }
       })
-      .catch(() => setColumns([]))
+      .catch((error) => {
+        setColumns([])
+        setRows([])
+        setTextColumn("")
+        setPreviewError(error instanceof Error ? error.message : "无法读取 CSV 预览")
+      })
       .finally(() => setLoading(false))
   }, [open, datasetName, jobId])
 
@@ -128,6 +135,11 @@ export function ColumnSelectPanel({
                   </div>
                 ))}
               </RadioGroup>
+              {columns.length === 0 && (
+                <p className="mt-2 text-sm text-red-600">
+                  {previewError || "未识别到 CSV 列名，请确认文件第一行是表头，例如：id,text,date"}
+                </p>
+              )}
             </div>
 
             {columns.length > 1 && (

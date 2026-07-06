@@ -494,7 +494,7 @@ export const ETMAgentAPI = {
     } catch {
       return { task_id: taskId, status: "unknown", logs: [], total_count: 0 };
     }
-   },
+  },
 
   async createTask(request: CreateTaskRequest & { job_id?: string }): Promise<TaskResponse> {
     const userId = getCurrentUserId();
@@ -658,8 +658,7 @@ export const ETMAgentAPI = {
   },
 
   async getDatasetPreview(dataset: string, jobId?: string): Promise<{ columns: string[]; rows: string[][] }> {
-    // 后端暂无预览 API，暂时返回空数据
-    return { columns: [], rows: [] };
+    return apiFetch(API_BASE, `/api/datasets/${encodeURIComponent(dataset)}/preview`);
   },
 
   async listVisualizations(dataset: string, mode: string): Promise<Array<{ name: string; path: string; type: string; size?: number }>> {

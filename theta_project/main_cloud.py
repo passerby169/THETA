@@ -82,6 +82,11 @@ class FileResponse(BaseModel):
         from_attributes = True
 
 
+class DatasetPreviewResponse(BaseModel):
+    columns: List[str]
+    rows: List[List[str]]
+
+
 class UploadTokenResponse(BaseModel):
     credentials: dict = {}
     upload_path: str
@@ -424,6 +429,52 @@ def upload_complete(
 def list_files(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     files = db.query(File).filter(File.owner_id == current_user.id).all()
     return [file_to_response(file) for file in files if (file.file_path or "").startswith("raw_data/")]
+
+
+@app.get("/api/datasets/{dataset}/preview", response_model=DatasetPreviewResponse)
+def preview_dataset(dataset: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    prefix = f"raw_data/{current_user.username}/{dataset}/"
+    file_record = (
+        db.query(File)
+        .filter(File.owner_id == current_user.id, File.file_path.like(f"{prefix}%"))
+        .filter(File.filename.ilike("%.csv"))
+        .order_by(File.created_at.desc())
+        .first()
+    )
+
+    object_key = file_record.file_path if file_record else None
+    if not object_key:
+        csv_objects = [
+            entry for entry in storage.list_objects(prefix)
+            if not entry.is_prefix and entry.key.lower().endswith(".csv")
+        ]
+        if csv_objects:
+            object_key = sorted(csv_objects, key=lambda item: item.last_modified or datetime.min, reverse=True)[0].key
+
+    if not object_key:
+        raise HTTPException(status_code=404, detail="No CSV file found for this dataset")
+
+    try:
+        content = storage.get_object_bytes(object_key).decode("utf-8-sig")
+    except UnicodeDecodeError:
+        content = storage.get_object_bytes(object_key).decode("gb18030", errors="replace")
+
+    reader = csv.reader(io.StringIO(content))
+    try:
+        columns = [str(cell).strip() for cell in next(reader)]
+    except StopIteration:
+        raise HTTPException(status_code=400, detail="CSV file is empty")
+
+    if not columns or all(not col for col in columns):
+        raise HTTPException(status_code=400, detail="CSV header row is empty")
+
+    rows: List[List[str]] = []
+    for row in reader:
+        rows.append([str(cell) for cell in row])
+        if len(rows) >= 5:
+            break
+
+    return DatasetPreviewResponse(columns=columns, rows=rows)
 
 
 @app.get("/api/preprocessing/check/{dataset}", response_model=PreprocessingStatusResponse)
