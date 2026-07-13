@@ -265,6 +265,14 @@ function DashboardContent() {
     }
   }, [isLoading, projects, tabs, activeTabId])
 
+  useEffect(() => {
+    if (isLoading || activeTabId === "hub") return
+    const currentProject = projects.find(p => p.id === activeTabId)
+    if (!currentProject) {
+      setActiveTabId("hub")
+    }
+  }, [isLoading, activeTabId, projects])
+
   // 轮询训练状态
   useEffect(() => {
     const pollTrainingStatus = async () => {
@@ -319,7 +327,6 @@ function DashboardContent() {
 
   // 刷新项目列表（与 load 相同逻辑，保留正在运行的项目）
   const refreshProjects = useCallback(async () => {
-    setIsLoading(true)
     try {
       console.log("[Dashboard] Refreshing projects...");
       const [dbProjects, datasets, tasks, ossInfo] = await Promise.all([
@@ -469,8 +476,6 @@ function DashboardContent() {
       })
     } catch (error) {
       console.error("Failed to refresh projects:", error)
-    } finally {
-      setIsLoading(false)
     }
   }, [])
 
@@ -865,9 +870,8 @@ function DashboardContent() {
       )
     }
 
-    // 如果项目找不到，自动切回项目中心
+    // 如果项目找不到，等待 effect 切回项目中心，避免在 render 中触发状态更新
     if (!currentProject) {
-      setActiveTabId("hub")
       return null
     }
 
@@ -889,10 +893,6 @@ function DashboardContent() {
           numTopics={currentProject.numTopics || 20}
           initialTaskId={currentProject.taskId}
           pipelineStatus={currentProject.pipelineStatus}
-          onDlcStarted={() => {
-            // DLC 训练开始，自动返回项目中心
-            setActiveTabId("hub")
-          }}
           onConfigConfirmed={async (config) => {
             setProjects(prev => prev.map(p =>
               p.id === currentProject.id
