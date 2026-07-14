@@ -95,6 +95,10 @@ function DashboardContent() {
 
   const handleSendMessageRef = useRef<(payload: string | SendMessagePayload) => void | Promise<void>>(() => {})
 
+  const normalizeProjectKey = useCallback((value?: string | null) => {
+    return (value || "").trim().toLowerCase()
+  }, [])
+
   useEffect(() => {
     return () => {
       if (transitionTimerRef.current) {
@@ -256,22 +260,35 @@ function DashboardContent() {
     loadProjects()
   }, [])
 
-  // Validate activeTabId after projects load: if active tab no longer exists, fallback to hub
-  useEffect(() => {
-    if (isLoading) return
-    const tabExists = tabs.some(t => t.id === activeTabId)
-    if (!tabExists && tabs.length > 0) {
-      setActiveTabId("hub")
-    }
-  }, [isLoading, projects, tabs, activeTabId])
-
+  // Keep the active project tab stable across background refreshes. A project can
+  // move from an optimistic/local id to a database-backed id after refresh.
   useEffect(() => {
     if (isLoading || activeTabId === "hub") return
-    const currentProject = projects.find(p => p.id === activeTabId)
-    if (!currentProject) {
-      setActiveTabId("hub")
+
+    if (projects.some(p => p.id === activeTabId)) return
+
+    const activeTab = tabs.find(t => t.id === activeTabId)
+    const tabKey = normalizeProjectKey(activeTab?.title)
+    const replacement = tabKey
+      ? projects.find(p =>
+          normalizeProjectKey(p.datasetName) === tabKey ||
+          normalizeProjectKey(p.name) === tabKey
+        )
+      : undefined
+
+    if (replacement) {
+      setTabs(prev => prev.map(tab =>
+        tab.id === activeTabId
+          ? { ...tab, id: replacement.id, title: replacement.name }
+          : tab
+      ))
+      setActiveTabId(replacement.id)
+      return
     }
-  }, [isLoading, activeTabId, projects])
+
+    const tabExists = tabs.some(t => t.id === activeTabId)
+    if (!tabExists) setActiveTabId("hub")
+  }, [isLoading, activeTabId, projects, tabs, normalizeProjectKey])
 
   // 轮询训练状态
   useEffect(() => {
@@ -1018,37 +1035,48 @@ function ProjectResultView({ project }: { project: WorkspaceProject }) {
 
   // 获取用户选择的模型列表
   const userSelectedModels = project.models || []
+  const userSelectedModelKey = userSelectedModels.join(",")
 
   // 获取可用的模型列表（信任 /models API 的结果，不再二次验证 topic-words）
   useEffect(() => {
+    let cancelled = false
+
     const loadAvailableModels = async () => {
-      setLoadingModels(true)
+      setLoadingModels(availableModels.length === 0)
       try {
         const availableResponse = await apiFetch<{ models?: string[] }>(
           API_BASE,
           `/api/results/${encodeURIComponent(dataset)}/models`
         )
+        if (cancelled) return
+
         if (availableResponse && availableResponse.models && availableResponse.models.length > 0) {
           const models = availableResponse.models
           setAvailableModels(models)
-          // 始终使用后端返回的第一个模型，避免 project.models 与实际不符
-          setSelectedModel(models[0])
+          setSelectedModel(current => current && models.includes(current) ? current : models[0])
         } else {
           setAvailableModels([])
+          setSelectedModel(null)
         }
       } catch {
+        if (cancelled) return
         // 后端 API 不可用时回退
         setAvailableModels(userSelectedModels.length > 0 ? userSelectedModels : [])
         if (userSelectedModels.length > 0) {
-          setSelectedModel(userSelectedModels[0])
+          setSelectedModel(current => current && userSelectedModels.includes(current) ? current : userSelectedModels[0])
+        } else {
+          setSelectedModel(null)
         }
       } finally {
-        setLoadingModels(false)
+        if (!cancelled) setLoadingModels(false)
       }
     }
 
     loadAvailableModels()
-  }, [dataset])
+    return () => {
+      cancelled = true
+    }
+  }, [dataset, userSelectedModelKey, availableModels.length])
 
   // 模型标签映射
   const MODEL_LABELS: Record<string, string> = {

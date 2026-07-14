@@ -23,23 +23,34 @@ export function TopicWordsTab({ dataset, mode, shouldLoad, selectedModel = "thet
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expandedTopics, setExpandedTopics] = useState<Set<string>>(new Set())
+  const isStaleData = !!topicData && (topicData.dataset !== dataset || topicData.model !== selectedModel)
 
   useEffect(() => {
     if (!shouldLoad) return
-    setLoading(true)
+    let cancelled = false
+
+    setLoading(topicData === null || isStaleData)
     setError(null)
 
     apiFetch<TopicData>(API_BASE, `/api/results/${encodeURIComponent(dataset)}/topic-words?model=${encodeURIComponent(selectedModel)}`)
       .then((data) => {
+        if (cancelled) return
         setTopicData(data)
         setExpandedTopics(new Set())
       })
       .catch((e) => {
+        if (cancelled) return
         console.error("Failed to load topic words:", e)
         setError(e.message ?? "加载失败")
         setTopicData(null)
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [dataset, shouldLoad, selectedModel])
 
   const toggleExpand = (topic: string) => {
