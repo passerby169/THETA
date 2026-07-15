@@ -4,6 +4,7 @@ import os
 import base64
 import mimetypes
 import json
+import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -1048,6 +1049,17 @@ def interpret_placeholder(payload: Dict[str, Any], current_user: User = Depends(
     return {"success": True, "message": "Interpretation is queued for a later AI service pass", "data": payload}
 
 
+def sanitize_vision_analysis(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+    if cleaned.lower().startswith("<think>"):
+        parts = re.split(r"</think>", cleaned, flags=re.IGNORECASE, maxsplit=1)
+        cleaned = parts[1].strip() if len(parts) > 1 else ""
+    cleaned = re.sub(r"</?think>", "", cleaned, flags=re.IGNORECASE).strip()
+    return cleaned
+
+
 @app.post("/api/vision/analyze-chart")
 def analyze_chart(payload: Dict[str, Any], current_user: User = Depends(get_current_user)):
     provider = os.getenv("VISION_PROVIDER", "minimax").lower()
@@ -1077,7 +1089,7 @@ def analyze_chart(payload: Dict[str, Any], current_user: User = Depends(get_curr
     cache_key = f"{result_path_key(current_user.username, dataset, model)}/analysis/{clean_path}.json"
     try:
         cached = storage.get_object_json(cache_key)
-        analysis = cached.get("analysis")
+        analysis = sanitize_vision_analysis(cached.get("analysis", ""))
         if analysis:
             return {"success": True, "message": "Chart analysis loaded from cache", "data": {"analysis": analysis}}
     except Exception:
@@ -1092,10 +1104,11 @@ def analyze_chart(payload: Dict[str, Any], current_user: User = Depends(get_curr
 
     prompt_language = "中文" if language.startswith("zh") else "English"
     prompt = (
-        f"请用{prompt_language}解读这张 THETA 主题模型分析图表。"
+        f"请只用{prompt_language}解读这张 THETA 主题模型分析图表。"
         f"图表名称：{chart_name}。分析类型：{analysis_type}。"
         "要求：1）先说明图表展示的核心信息；2）指出最值得关注的趋势、差异或异常；"
         "3）给出对研究者有用的结论。控制在 120 字以内，避免编造图中不存在的数据。"
+        "不要输出推理过程，不要输出英文，不要输出 <think> 标签。"
     )
 
     api_base = os.getenv("VISION_API_BASE", "https://api.minimaxi.com/v1").rstrip("/")
@@ -1115,7 +1128,7 @@ def analyze_chart(payload: Dict[str, Any], current_user: User = Depends(get_curr
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are a concise research assistant for interpreting topic-model charts.",
+                        "content": "你是科研图表解读助手。只输出最终中文解读，不输出推理过程或 <think> 标签。",
                     },
                     {
                         "role": "user",
@@ -1138,6 +1151,7 @@ def analyze_chart(payload: Dict[str, Any], current_user: User = Depends(get_curr
             .get("content", "")
             .strip()
         )
+        analysis = sanitize_vision_analysis(analysis)
     except requests.HTTPError as exc:
         detail_text = exc.response.text[:500] if exc.response is not None else str(exc)
         raise HTTPException(status_code=502, detail=f"MiniMax vision request failed: {detail_text}") from exc

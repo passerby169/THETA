@@ -253,6 +253,7 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
   // 自动触发所有图片的 AI 解读，在客户端 useEffect 中执行避免 SSR 401
   useEffect(() => {
     if (!vizData) return
+    return
 
     // 遍历所有全局图片
     vizData.global_files.forEach((file) => {
@@ -332,6 +333,37 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
       })
     })
   }, [vizData, selectedModel, setAiInterpretations])
+
+  const generateChartAnalysis = useCallback((file: VisualizationFile) => {
+    if (!vizData) return
+
+    setAiInterpretations(prev => ({
+      ...prev,
+      [file.path]: { status: 'loading', text: '' }
+    }))
+
+    ETMAgentAPI.analyzeChart('', file.name, 'general', 'zh', vizData.dataset, file.path, selectedModel || "theta")
+      .then(result => {
+        const analysis = result.data?.analysis || result.analysis || '无法生成解读'
+        const success = result.success ?? true
+        setAiInterpretations(prev => ({
+          ...prev,
+          [file.path]: {
+            status: success ? 'done' : 'error',
+            text: analysis
+          }
+        }))
+      })
+      .catch((error) => {
+        setAiInterpretations(prev => ({
+          ...prev,
+          [file.path]: {
+            status: 'error',
+            text: `请求失败: ${error.message || 'AI 解读暂时无法获取'}`
+          }
+        }))
+      })
+  }, [vizData, selectedModel])
 
   const toggleFileSelection = (filePath: string) => {
     setSelectedFiles((prev) => {
@@ -646,10 +678,13 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                 {/* AI 解读结果 */}
                 <div className="px-3 py-3 border-t border-slate-100 bg-emerald-50/50">
                   {!aiInterpretations[file.path] && (
-                    <div className="flex items-center justify-center gap-2 text-sm text-emerald-700 py-1">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>AI 正在分析图表...</span>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => generateChartAnalysis(file)}
+                      className="text-sm font-medium text-emerald-700 hover:text-emerald-800"
+                    >
+                      生成 AI 解读
+                    </button>
                   )}
                   {aiInterpretations[file.path]?.status === 'loading' && (
                     <div className="flex items-center justify-center gap-2 text-sm text-emerald-700 py-1">
@@ -663,9 +698,18 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                     </p>
                   )}
                   {aiInterpretations[file.path]?.status === 'error' && (
-                    <p className="text-sm text-slate-500">
-                      {aiInterpretations[file.path].text}
-                    </p>
+                    <div className="space-y-2">
+                      <p className="text-sm text-slate-500">
+                        {aiInterpretations[file.path].text}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => generateChartAnalysis(file)}
+                        className="text-sm font-medium text-emerald-700 hover:text-emerald-800"
+                      >
+                        重试解读
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1026,10 +1070,13 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                             {!isHtml && !file.name.endsWith(".csv") && (
                               <div className="px-3 py-2 border-t border-slate-100 bg-emerald-50/50">
                                 {!aiInterpretations[file.path] && (
-                                  <div className="flex items-center justify-center gap-2 text-sm text-emerald-700 py-1">
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                    <span>AI 正在分析图表...</span>
-                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => generateChartAnalysis(file)}
+                                    className="text-sm font-medium text-emerald-700 hover:text-emerald-800"
+                                  >
+                                    生成 AI 解读
+                                  </button>
                                 )}
                                 {aiInterpretations[file.path]?.status === 'loading' && (
                                   <div className="flex items-center justify-center gap-2 text-sm text-emerald-700 py-1">
@@ -1043,9 +1090,18 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                                   </p>
                                 )}
                                 {aiInterpretations[file.path]?.status === 'error' && (
-                                  <p className="text-sm text-slate-500">
-                                    {aiInterpretations[file.path].text}
-                                  </p>
+                                  <div className="space-y-2">
+                                    <p className="text-sm text-slate-500">
+                                      {aiInterpretations[file.path].text}
+                                    </p>
+                                    <button
+                                      type="button"
+                                      onClick={() => generateChartAnalysis(file)}
+                                      className="text-sm font-medium text-emerald-700 hover:text-emerald-800"
+                                    >
+                                      重试解读
+                                    </button>
+                                  </div>
                                 )}
                               </div>
                             )}
