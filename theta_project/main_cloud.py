@@ -27,7 +27,7 @@ from starlette.responses import Response, StreamingResponse
 from app.database import Base, ChatMessage, File, SessionLocal, TrainingJob, User, VerificationCode, engine, get_db
 from services.gpu_provider import submit_training_job
 from utils import object_storage as storage
-from utils.prompts import AI_CHAT_SYSTEM_PROMPT, DASHSCOPE_MODEL, build_chart_analysis_messages
+from utils.prompts import AI_CHAT_SYSTEM_PROMPT, AI_CHAT_SYSTEM_PROMPT_MULTI, DASHSCOPE_MODEL, build_chart_analysis_messages
 
 load_dotenv()
 
@@ -1264,8 +1264,9 @@ def _chat_with_openai_compatible(request: ChatRequest) -> Optional[str]:
             or os.getenv("EMBEDDING_MODEL")
             or "MiniMax-M1"
         )
+    system_prompt = AI_CHAT_SYSTEM_PROMPT_MULTI if has_images or request.files else AI_CHAT_SYSTEM_PROMPT
     messages = [
-        {"role": "system", "content": AI_CHAT_SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": _build_openai_user_content(request)},
     ]
     if request.context:
@@ -1312,7 +1313,12 @@ def _chat_with_dashscope(request: ChatRequest) -> Optional[str]:
 
 
 def _generate_chat_answer(request: ChatRequest) -> str:
-    if os.getenv("CHAT_API_KEY") or os.getenv("MINIMAX_API_KEY") or os.getenv("VISION_API_KEY"):
+    if (
+        os.getenv("CHAT_API_KEY")
+        or os.getenv("MINIMAX_API_KEY")
+        or os.getenv("VISION_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+    ):
         try:
             answer = _chat_with_openai_compatible(request)
             if answer:
@@ -1327,7 +1333,7 @@ def _generate_chat_answer(request: ChatRequest) -> str:
     except Exception as exc:
         return f"AI 请求失败：{exc}"
 
-    return "AI 聊天未配置：请设置 CHAT_API_KEY、MINIMAX_API_KEY 或 DASHSCOPE_API_KEY。"
+    return "AI 聊天未配置：请在后端环境变量设置 CHAT_API_KEY、MINIMAX_API_KEY、VISION_API_KEY 或 DASHSCOPE_API_KEY。图片分析至少需要 VISION_API_KEY 或 MINIMAX_API_KEY。"
 
 
 @app.post("/api/agent/chat")
@@ -1427,7 +1433,8 @@ def analyze_chart(payload: Dict[str, Any], current_user: User = Depends(get_curr
         raise HTTPException(status_code=400, detail="Only image chart files can be analyzed")
 
     clean_path = unquote(chart_path).replace("\\", "/").lstrip("/")
-    cache_key = f"{result_path_key(current_user.username, dataset, model)}/analysis/{clean_path}.json"
+    cache_version = os.getenv("VISION_ANALYSIS_CACHE_VERSION", "v2")
+    cache_key = f"{result_path_key(current_user.username, dataset, model)}/analysis/{cache_version}/{clean_path}.json"
     try:
         cached = storage.get_object_json(cache_key)
         analysis = sanitize_vision_analysis(cached.get("analysis", ""))
@@ -1445,7 +1452,7 @@ def analyze_chart(payload: Dict[str, Any], current_user: User = Depends(get_curr
 
     api_base = os.getenv("VISION_API_BASE", "https://api.minimaxi.com/v1").rstrip("/")
     vision_model = os.getenv("VISION_MODEL", "MiniMax-M3")
-    max_tokens = int(os.getenv("VISION_MAX_TOKENS", "400"))
+    max_tokens = max(800, int(os.getenv("VISION_MAX_TOKENS", "1000")))
     detail = os.getenv("VISION_IMAGE_DETAIL", "low")
     messages = build_chart_analysis_messages(
         chart_name=chart_name,

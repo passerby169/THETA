@@ -43,6 +43,7 @@ DASHSCOPE_VL_MODEL = "qwen-vl-plus"
 CHART_ANALYSIS_SYSTEM_PROMPT = (
     "你是科研图表解读助手，专门解读 THETA 主题模型输出的图表。"
     "只输出最终中文解读，不输出推理过程，不输出 <think> 标签，不输出英文分析。"
+    "必须用完整句子收尾，不能以半句话、逗号或未完成的项目符号结束。"
 )
 
 CHART_ANALYSIS_PROMPT_TEMPLATE = (
@@ -53,9 +54,11 @@ CHART_ANALYSIS_PROMPT_TEMPLATE = (
     "1. 先说明图表展示的核心信息；\n"
     "2. 指出最值得关注的趋势、差异或异常；\n"
     "3. 给出对研究者有用的结论；\n"
-    "4. 控制在 120 字以内；\n"
+    "4. 控制在 150 到 220 字之间；\n"
     "5. 避免编造图中不存在的数据；\n"
-    "6. 不要输出推理过程，不要输出 <think> 标签。"
+    "6. 不要输出推理过程，不要输出 <think> 标签；\n"
+    "7. 不要使用 Markdown 标题或加粗符号；\n"
+    "8. 最后一句必须是完整结论，不能中途截断。"
 )
 
 CHART_ANALYSIS_FEW_SHOT_EXAMPLES: list[dict] = [

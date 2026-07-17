@@ -693,7 +693,7 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                     </div>
                   )}
                   {aiInterpretations[file.path]?.status === 'done' && (
-                    <p className="text-sm text-slate-700 leading-relaxed">
+                    <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words">
                       <span className="font-semibold text-emerald-700">AI 解读：</span> {aiInterpretations[file.path].text}
                     </p>
                   )}
@@ -1085,7 +1085,7 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                                   </div>
                                 )}
                                 {aiInterpretations[file.path]?.status === 'done' && (
-                                  <p className="text-sm text-slate-700 leading-relaxed">
+                                  <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words">
                                     <span className="font-semibold text-emerald-700">AI 解读：</span> {aiInterpretations[file.path].text}
                                   </p>
                                 )}
