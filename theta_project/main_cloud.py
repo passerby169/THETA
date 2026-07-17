@@ -506,15 +506,45 @@ def send_auth_verification_code(request: SendVerificationCodeRequest, db: Sessio
         if existing_user:
             raise HTTPException(status_code=400, detail="Email already registered")
 
+    now = datetime.utcnow()
+    min_interval_seconds = int(os.getenv("VERIFICATION_CODE_RESEND_SECONDS", "60"))
+    hourly_limit = int(os.getenv("VERIFICATION_CODE_HOURLY_LIMIT", "5"))
+
+    latest_code = (
+        db.query(VerificationCode)
+        .filter(VerificationCode.email == email, VerificationCode.purpose == purpose)
+        .order_by(VerificationCode.created_at.desc())
+        .first()
+    )
+    if latest_code and (now - latest_code.created_at).total_seconds() < min_interval_seconds:
+        raise HTTPException(
+            status_code=429,
+            detail=f"验证码发送过于频繁，请 {min_interval_seconds} 秒后再试",
+        )
+
+    recent_count = (
+        db.query(VerificationCode)
+        .filter(
+            VerificationCode.email == email,
+            VerificationCode.purpose == purpose,
+            VerificationCode.created_at >= now - timedelta(hours=1),
+        )
+        .count()
+    )
+    if recent_count >= hourly_limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"验证码发送次数过多，请 1 小时后再试",
+        )
+
     code = f"{secrets.randbelow(1_000_000):06d}"
     expires_minutes = int(os.getenv("VERIFICATION_CODE_EXPIRE_MINUTES", "10"))
-    now = datetime.utcnow()
 
     db.query(VerificationCode).filter(
         VerificationCode.email == email,
         VerificationCode.purpose == purpose,
         VerificationCode.consumed_at.is_(None),
-    ).delete(synchronize_session=False)
+    ).update({VerificationCode.consumed_at: now}, synchronize_session=False)
 
     record = VerificationCode(
         email=email,
