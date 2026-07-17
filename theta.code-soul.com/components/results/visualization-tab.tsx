@@ -122,6 +122,65 @@ function CsvPreview({ dataset, path }: { dataset: string; path: string }) {
   )
 }
 
+// HTML 预览组件（通过 iframe srcdoc 加载，可执行 JavaScript）
+function HtmlPreview({ dataset, model, path }: { dataset: string; model: string; path: string }) {
+  const [htmlContent, setHtmlContent] = useState<string>("")
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const proxyUrl = `${API_BASE}/api/results/${encodeURIComponent(dataset)}/visualizations/file?model=${encodeURIComponent(model)}&path=${encodeURIComponent(path)}`
+
+  useEffect(() => {
+    const token = localStorage.getItem("access_token")
+    setLoading(true)
+    setError(null)
+    fetch(proxyUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("无法加载 HTML")
+        return res.text()
+      })
+      .then((text) => {
+        setHtmlContent(text)
+        setLoading(false)
+      })
+      .catch(() => {
+        setError("加载失败")
+        setLoading(false)
+      })
+  }, [proxyUrl])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[400px] bg-slate-100">
+        <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-[400px] bg-slate-100 text-slate-400">
+        {error}
+      </div>
+    )
+  }
+
+  // 构建 srcdoc，注入 base 标签使相对路径资源正确加载
+  const baseUrl = proxyUrl.replace(/\?.*$/, "")
+  const srcdoc = htmlContent.replace("<head>", `<head><base href="${baseUrl}">`)
+
+  return (
+    <iframe
+      srcDoc={srcdoc}
+      title="HTML Preview"
+      className="w-full h-full border-0"
+      sandbox="allow-scripts allow-same-origin"
+    />
+  )
+}
+
 function AuthenticatedImage({
   dataset,
   model,
@@ -500,66 +559,6 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
     return response.text()
   }, [dataset])
 
-  // 获取代理预览 URL（用于 HTML 和 CSV 预览）
-  const getProxyUrl = (path: string): string => {
-    return `${API_BASE}/api/results/${encodeURIComponent(dataset)}/visualizations/file?model=${encodeURIComponent(selectedModel || "theta")}&path=${encodeURIComponent(path)}`
-  }
-
-  // HTML 预览组件（通过 iframe srcdoc 加载，可执行 JavaScript）
-  function HtmlPreview({ path }: { path: string }) {
-    const [htmlContent, setHtmlContent] = useState<string>("")
-    const [loading, setLoading] = useState(true)
-    const [error, setError] = useState<string | null>(null)
-
-    useEffect(() => {
-      const token = localStorage.getItem("access_token")
-      fetch(getProxyUrl(path), {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-        .then((res) => {
-          if (!res.ok) throw new Error("无法加载 HTML")
-          return res.text()
-        })
-        .then((text) => {
-          setHtmlContent(text)
-          setLoading(false)
-        })
-        .catch(() => {
-          setError("加载失败")
-          setLoading(false)
-        })
-    }, [path])
-
-    if (loading) {
-      return (
-        <div className="flex items-center justify-center h-[400px] bg-slate-100">
-          <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
-        </div>
-      )
-    }
-
-    if (error) {
-      return (
-        <div className="flex items-center justify-center h-[400px] bg-slate-100 text-slate-400">
-          {error}
-        </div>
-      )
-    }
-
-    // 构建 srcdoc，注入 base 标签使相对路径资源正确加载
-    const baseUrl = getProxyUrl(path).replace(/\?.*$/, '')
-    const srcdoc = htmlContent.replace('<head>', '<head><base href="' + baseUrl + '">')
-
-    return (
-      <iframe
-        srcDoc={srcdoc}
-        title="HTML Preview"
-        className="w-full h-full border-0"
-        sandbox="allow-scripts allow-same-origin"
-      />
-    )
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -637,8 +636,13 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                   <input
                     type="checkbox"
                     checked={isSendSelected}
-                    onChange={() => toggleImageSelection(file.path)}
-                    className="h-4 w-4 rounded border-emerald-300 text-emerald-600"
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      e.stopPropagation()
+                      toggleImageSelection(file.path)
+                    }}
+                    className="h-4 w-4 rounded border-emerald-300 text-emerald-600 cursor-pointer"
                     title="选择发送给 AI"
                   />
                   <span className="text-sm font-medium text-slate-700 truncate flex-1">
@@ -731,8 +735,13 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                 <input
                   type="checkbox"
                   checked={isSelected}
-                  onChange={() => toggleFileSelection(file.path)}
-                  className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onChange={(e) => {
+                    e.stopPropagation()
+                    toggleFileSelection(file.path)
+                  }}
+                  className="h-4 w-4 rounded border-slate-300 text-blue-600 cursor-pointer"
                 />
                 <span className="text-sm font-medium text-slate-700 truncate flex-1">
                   {getDisplayName(file.name)}
@@ -748,7 +757,7 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                 className="bg-slate-100 relative cursor-pointer group h-[60vh] min-h-[400px]"
                 onClick={() => window.open(`/preview?dataset=${encodeURIComponent(dataset)}&path=${encodeURIComponent(file.path)}`, "_blank")}
               >
-                <HtmlPreview path={file.path} />
+                <HtmlPreview dataset={dataset} model={selectedModel || "theta"} path={file.path} />
                 {/* 悬停遮罩层 */}
                 <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/40 transition-colors">
                   <div className="text-white text-lg font-medium opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 px-4 py-2 rounded-lg">
@@ -774,8 +783,13 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                 <input
                   type="checkbox"
                   checked={isSelected}
-                  onChange={() => toggleFileSelection(file.path)}
-                  className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onChange={(e) => {
+                    e.stopPropagation()
+                    toggleFileSelection(file.path)
+                  }}
+                  className="h-4 w-4 rounded border-slate-300 text-blue-600 cursor-pointer"
                 />
                 <span className="text-sm font-medium text-slate-700 truncate flex-1">
                   {getDisplayName(file.name)}
@@ -1026,8 +1040,13 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                               <input
                                 type="checkbox"
                                 checked={isSelected}
-                                onChange={() => toggleFileSelection(file.path)}
-                                className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onChange={(e) => {
+                                  e.stopPropagation()
+                                  toggleFileSelection(file.path)
+                                }}
+                                className="h-4 w-4 rounded border-slate-300 text-blue-600 cursor-pointer"
                               />
                               <span className="text-sm text-slate-700 truncate flex-1">
                                 {displayName}
@@ -1043,7 +1062,7 @@ export function VisualizationTab({ dataset, mode, shouldLoad, selectedModel = "t
                             {/* 预览 */}
                             <div className="min-h-[140px] max-h-[240px] flex items-center justify-center bg-slate-100 overflow-auto relative group">
                               {isHtml ? (
-                                <HtmlPreview path={file.path} />
+                                <HtmlPreview dataset={dataset} model={selectedModel || "theta"} path={file.path} />
                               ) : file.name.endsWith(".csv") ? (
                                 <CsvPreview dataset={dataset} path={file.path} />
                               ) : (

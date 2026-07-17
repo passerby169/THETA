@@ -53,6 +53,21 @@ function generateId() {
   return `msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
 }
 
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ""))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
 const LANDING_GREETING = "您好！我已经准备好分析您的数据。请上传文件或直接提问。"
 
 /** 首页标题下打字机循环展示的平台功能文案（每条不同，轮流出现） */
@@ -196,8 +211,10 @@ export default function LandingPage() {
   }, [countdown])
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
   const [chatInputValue, setChatInputValue] = useState("")
+  const [landingAttachments, setLandingAttachments] = useState<File[]>([])
   const [isAiLoading, setIsAiLoading] = useState(false)
   const chatCardRef = useRef<HTMLDivElement>(null)
+  const landingFileInputRef = useRef<HTMLInputElement>(null)
   const [howItWorksStep, setHowItWorksStep] = useState(0)
   const [pricingMode, setPricingMode] = useState<"per-use" | "monthly" | "yearly">("per-use")
   const [faqOpenIndex, setFaqOpenIndex] = useState<number | null>(null)
@@ -371,18 +388,38 @@ export default function LandingPage() {
     }
   }
 
+  const handleLandingFileInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || [])
+    if (files.length > 0) {
+      setLandingAttachments((prev) => [...prev, ...files])
+    }
+    event.target.value = ""
+  }, [])
+
+  const removeLandingAttachment = useCallback((index: number) => {
+    setLandingAttachments((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+
   // 与 dashboard 一致的对话：真实 Qwen 接口 + 流式打字机效果
   const handleLandingChatSend = useCallback(async (content: string) => {
-    if (!content.trim() || isAiLoading) return
+    const attachments = landingAttachments
+    const trimmedContent = content.trim()
+    if ((!trimmedContent && attachments.length === 0) || isAiLoading) return
+
+    const attachmentSummary = attachments
+      .map((file) => `- ${file.name} (${formatFileSize(file.size)})`)
+      .join("\n")
+    const messageContent = `${trimmedContent || "请分析我上传的文件"}${attachmentSummary ? `\n\n已附加文件：\n${attachmentSummary}` : ""}`
     const userMessage: ChatMessage = {
       id: generateId(),
       role: "user",
-      content: content.trim(),
+      content: messageContent,
       type: "text",
       timestamp: getTimestamp(),
     }
     setChatHistory((prev) => [...prev, userMessage])
     setChatInputValue("")
+    setLandingAttachments([])
     setIsAiLoading(true)
 
     // 创建空的 AI 消息，准备流式接收
@@ -397,16 +434,27 @@ export default function LandingPage() {
     setChatHistory((prev) => [...prev, aiMessage])
 
     try {
+      const payloads = await Promise.all(
+        attachments.map(async (file) => ({
+          name: file.name,
+          mimeType: file.type || "application/octet-stream",
+          size: file.size,
+          dataUrl: await fileToDataUrl(file),
+        }))
+      )
+      const images = payloads.filter((file) => file.mimeType.startsWith("image/"))
+      const files = payloads.filter((file) => !file.mimeType.startsWith("image/"))
+
       // 使用流式 API 逐步接收
       let fullText = ""
-      for await (const chunk of ETMAgentAPI.chatStream(content.trim(), "landing-session", {
+      for await (const chunk of ETMAgentAPI.chatStream(messageContent, "landing-session", {
         current_page: "landing",
         current_view_name: "首页",
         current_view: "landing",
         app_state: "idle",
         datasets_count: 0,
         datasets: [],
-      })) {
+      }, images, files)) {
         if (chunk.type === "content" && chunk.content) {
           fullText += chunk.content
           // 更新消息内容，TypingMessage 会自动逐字显示
@@ -420,14 +468,14 @@ export default function LandingPage() {
         }
       }
       if (!fullText.trim()) {
-        const response = await ETMAgentAPI.chat(content.trim(), {
+        const response = await ETMAgentAPI.chat(messageContent, {
           current_page: "landing",
           current_view_name: "首页",
           current_view: "landing",
           app_state: "idle",
           datasets_count: 0,
           datasets: [],
-        }, { sessionId: "landing-session" })
+        }, { sessionId: "landing-session", images, files })
         const text = response.message ?? (response as { response?: string }).response ?? "暂时无法连接 AI 服务，请稍后再试。"
         setChatHistory((prev) =>
           prev.map(msg =>
@@ -440,14 +488,24 @@ export default function LandingPage() {
     } catch {
       // 流式失败，回退到完整请求
       try {
-        const response = await ETMAgentAPI.chat(content.trim(), {
+        const payloads = await Promise.all(
+          attachments.map(async (file) => ({
+            name: file.name,
+            mimeType: file.type || "application/octet-stream",
+            size: file.size,
+            dataUrl: await fileToDataUrl(file),
+          }))
+        )
+        const images = payloads.filter((file) => file.mimeType.startsWith("image/"))
+        const files = payloads.filter((file) => !file.mimeType.startsWith("image/"))
+        const response = await ETMAgentAPI.chat(messageContent, {
           current_page: "landing",
           current_view_name: "首页",
           current_view: "landing",
           app_state: "idle",
           datasets_count: 0,
           datasets: [],
-        })
+        }, { sessionId: "landing-session", images, files })
         const text = response.message ?? (response as { response?: string }).response ?? ""
         setChatHistory((prev) =>
           prev.map(msg =>
@@ -468,7 +526,7 @@ export default function LandingPage() {
     } finally {
       setIsAiLoading(false)
     }
-  }, [isAiLoading])
+  }, [isAiLoading, landingAttachments])
 
   const lastAiMessageId = chatHistory.length > 0
     ? [...chatHistory].reverse().find((m) => m.role === "ai")?.id
@@ -819,7 +877,7 @@ export default function LandingPage() {
                                   speed={40}
                                 />
                               ) : (
-                                <p className="text-sm leading-relaxed">{msg.content}</p>
+                                <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.content}</p>
                               )}
                             </div>
                           </div>
@@ -841,8 +899,47 @@ export default function LandingPage() {
 
                   {/* Chat Input Footer - 真实输入与发送 */}
                   <div className="px-3 py-2 border-t border-slate-100 bg-slate-50/50 shrink-0">
+                    {landingAttachments.length > 0 && (
+                      <div className="mb-2 flex flex-wrap gap-1.5">
+                        {landingAttachments.map((file, index) => (
+                          <span
+                            key={`${file.name}-${file.size}-${index}`}
+                            className="inline-flex max-w-full items-center gap-1 rounded-full border border-blue-100 bg-blue-50 px-2 py-1 text-xs text-blue-700"
+                          >
+                            <FileText className="h-3 w-3 shrink-0" />
+                            <span className="max-w-[160px] truncate">{file.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeLandingAttachment(index)}
+                              className="ml-1 rounded-full px-1 text-blue-500 hover:bg-blue-100 hover:text-blue-700"
+                              aria-label={`移除 ${file.name}`}
+                              disabled={isAiLoading}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2 focus-within:ring-2 focus-within:ring-blue-200 focus-within:border-blue-300">
-                      <Paperclip className="w-4 h-4 text-slate-400 shrink-0" />
+                      <input
+                        ref={landingFileInputRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        accept=".csv,.txt,.md,.json,.jsonl,.doc,.docx,.pdf,.xls,.xlsx,.png,.jpg,.jpeg,.webp"
+                        onChange={handleLandingFileInputChange}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => landingFileInputRef.current?.click()}
+                        disabled={isAiLoading}
+                        className="rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+                        title="添加文件"
+                        aria-label="添加文件"
+                      >
+                        <Paperclip className="w-4 h-4" />
+                      </button>
                       <input
                         type="text"
                         value={chatInputValue}
@@ -860,7 +957,7 @@ export default function LandingPage() {
                       <button
                         type="button"
                         onClick={() => handleLandingChatSend(chatInputValue)}
-                        disabled={!chatInputValue.trim() || isAiLoading}
+                        disabled={(!chatInputValue.trim() && landingAttachments.length === 0) || isAiLoading}
                         className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                       >
                         <Send className="w-4 h-4" />

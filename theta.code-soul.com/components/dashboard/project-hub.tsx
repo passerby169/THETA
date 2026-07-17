@@ -415,8 +415,12 @@ export function ProjectHub({ onProjectSelect, onNewProject, onDeleteProject, onB
                     {project.pipelineStatus === "completed" && project.datasetName && (
                       <div className="mt-auto pt-3 border-t border-slate-100" onClick={(e) => e.stopPropagation()}>
                         <button
-                          onClick={() => onProjectSelect(project.id)}
-                          className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline"
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onProjectSelect(project.id)
+                          }}
+                          className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1 py-1 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 hover:text-blue-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                         >
                           <ExternalLink className="w-3 h-3" />
                           查看结果
