@@ -5,8 +5,11 @@ import base64
 import mimetypes
 import json
 import re
+import secrets
+import smtplib
 import uuid
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 from typing import Any, Dict, List, Optional
 from urllib.parse import unquote
 
@@ -21,7 +24,7 @@ import requests
 from sqlalchemy.orm import Session
 from starlette.responses import Response, StreamingResponse
 
-from app.database import Base, ChatMessage, File, SessionLocal, TrainingJob, User, engine, get_db
+from app.database import Base, ChatMessage, File, SessionLocal, TrainingJob, User, VerificationCode, engine, get_db
 from services.gpu_provider import submit_training_job
 from utils import object_storage as storage
 from utils.prompts import AI_CHAT_SYSTEM_PROMPT, DASHSCOPE_MODEL, build_chart_analysis_messages
@@ -58,6 +61,19 @@ class UserCreate(BaseModel):
     username: str
     email: EmailStr
     password: str
+    full_name: Optional[str] = None
+    code: str
+
+
+class SendVerificationCodeRequest(BaseModel):
+    email: EmailStr
+    type: str = "register"
+
+
+class VerifyCodeRequest(BaseModel):
+    email: EmailStr
+    code: str
+    type: str = "register"
 
 
 class UserResponse(BaseModel):
@@ -265,6 +281,77 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def verification_secret(email: str, purpose: str, code: str) -> str:
+    return f"{normalize_email(email)}:{purpose}:{code}"
+
+
+def send_verification_email(email: str, code: str) -> bool:
+    host = os.getenv("SMTP_HOST")
+    if not host:
+        print(f"[auth] SMTP is not configured; verification code for {email}: {code}")
+        return False
+
+    port = int(os.getenv("SMTP_PORT", "587"))
+    username = os.getenv("SMTP_USERNAME")
+    password = os.getenv("SMTP_PASSWORD")
+    sender = os.getenv("SMTP_FROM") or username
+    use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
+
+    if not sender:
+        print(f"[auth] SMTP_FROM or SMTP_USERNAME is required; verification code for {email}: {code}")
+        return False
+
+    message = EmailMessage()
+    message["Subject"] = "THETA 注册验证码"
+    message["From"] = sender
+    message["To"] = email
+    message.set_content(
+        f"您的 THETA 注册验证码是：{code}\n\n"
+        f"验证码 {os.getenv('VERIFICATION_CODE_EXPIRE_MINUTES', '10')} 分钟内有效。"
+    )
+
+    try:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            if use_tls:
+                server.starttls()
+            if username and password:
+                server.login(username, password)
+            server.send_message(message)
+        return True
+    except Exception as exc:
+        print(f"[auth] failed to send verification email to {email}: {exc}")
+        print(f"[auth] verification code for {email}: {code}")
+        return False
+
+
+def get_latest_verification_code(db: Session, email: str, purpose: str) -> Optional[VerificationCode]:
+    return (
+        db.query(VerificationCode)
+        .filter(
+            VerificationCode.email == normalize_email(email),
+            VerificationCode.purpose == purpose,
+            VerificationCode.consumed_at.is_(None),
+        )
+        .order_by(VerificationCode.created_at.desc())
+        .first()
+    )
+
+
+def validate_verification_code(db: Session, email: str, purpose: str, code: str) -> VerificationCode:
+    record = get_latest_verification_code(db, email, purpose)
+    if not record:
+        raise HTTPException(status_code=400, detail="验证码不存在或已过期，请重新获取")
+    if record.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="验证码已过期，请重新获取")
+    if not verify_password(verification_secret(email, purpose, code), record.code_hash):
+        raise HTTPException(status_code=400, detail="验证码错误")
+    return record
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     payload = data.copy()
     payload["exp"] = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
@@ -407,17 +494,72 @@ def health():
     }
 
 
+@app.post("/api/auth/send-code")
+def send_auth_verification_code(request: SendVerificationCodeRequest, db: Session = Depends(get_db)):
+    purpose = request.type or "register"
+    if purpose not in {"register", "reset_password"}:
+        raise HTTPException(status_code=400, detail="Unsupported verification code type")
+
+    email = normalize_email(request.email)
+    if purpose == "register":
+        existing_user = db.query(User).filter(User.email == email).first()
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Email already registered")
+
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    expires_minutes = int(os.getenv("VERIFICATION_CODE_EXPIRE_MINUTES", "10"))
+    now = datetime.utcnow()
+
+    db.query(VerificationCode).filter(
+        VerificationCode.email == email,
+        VerificationCode.purpose == purpose,
+        VerificationCode.consumed_at.is_(None),
+    ).delete(synchronize_session=False)
+
+    record = VerificationCode(
+        email=email,
+        purpose=purpose,
+        code_hash=get_password_hash(verification_secret(email, purpose, code)),
+        expires_at=now + timedelta(minutes=expires_minutes),
+        created_at=now,
+    )
+    db.add(record)
+    db.commit()
+
+    sent = send_verification_email(email, code)
+    response = {
+        "message": "验证码已发送，请查收邮箱" if sent else "验证码已生成，请查看后端日志或配置 SMTP 邮件服务",
+    }
+    if os.getenv("AUTH_DEV_EXPOSE_CODE", "").lower() in {"1", "true", "yes", "on"}:
+        response["debug_code"] = code
+    return response
+
+
+@app.post("/api/auth/verify-code")
+def verify_auth_code(request: VerifyCodeRequest, db: Session = Depends(get_db)):
+    purpose = request.type or "register"
+    try:
+        validate_verification_code(db, request.email, purpose, request.code)
+    except HTTPException:
+        return {"valid": False}
+    return {"valid": True}
+
+
 @app.post("/api/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(user_data: UserCreate, db: Session = Depends(get_db)):
-    existing = db.query(User).filter((User.username == user_data.username) | (User.email == user_data.email)).first()
+    email = normalize_email(user_data.email)
+    existing = db.query(User).filter((User.username == user_data.username) | (User.email == email)).first()
     if existing:
         raise HTTPException(status_code=400, detail="Username or email already registered")
+
+    code_record = validate_verification_code(db, email, "register", user_data.code)
     user = User(
         username=user_data.username,
-        email=user_data.email,
+        email=email,
         hashed_password=get_password_hash(user_data.password),
         is_active=True,
     )
+    code_record.consumed_at = datetime.utcnow()
     db.add(user)
     db.commit()
     db.refresh(user)

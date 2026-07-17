@@ -61,6 +61,7 @@ export interface SendCodeRequest {
 export interface VerifyCodeRequest {
   email: string;
   code: string;
+  type?: "register" | "reset_password";
 }
 
 /** 将后端返回的用户/token 信息归一化为前端 User 格式 */
@@ -232,12 +233,20 @@ export const AuthAPI = {
 
 
 
-  async sendVerificationCode(data: SendCodeRequest): Promise<{ message: string }> {
-    return { message: '验证码已发送，测试阶段可输入任意 6 位数字' };
+  async sendVerificationCode(data: SendCodeRequest): Promise<{ message: string; debug_code?: string }> {
+    return apiFetch(API_BASE, '/api/auth/send-code', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      timeoutMs: 12_000,
+    });
   },
 
   async verifyCode(data: VerifyCodeRequest): Promise<{ valid: boolean }> {
-    return { valid: true };
+    return apiFetch(API_BASE, '/api/auth/verify-code', {
+      method: 'POST',
+      body: JSON.stringify({ type: 'register', ...data }),
+      timeoutMs: 12_000,
+    });
   },
 };
 

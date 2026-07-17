@@ -421,6 +421,7 @@ export function AiSidebar({
   const [pendingFiles, setPendingFiles] = useState<PendingFileAttachment[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
   const pendingImagesRef = useRef<PendingImageAttachment[]>([])
 
   useEffect(() => {
@@ -434,6 +435,20 @@ export function AiSidebar({
       }
     }
   }, [])
+
+  const scrollToLatestMessage = useCallback((behavior: ScrollBehavior = "smooth") => {
+    window.requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior, block: "end" })
+    })
+  }, [])
+
+  useEffect(() => {
+    scrollToLatestMessage("auto")
+  }, [scrollToLatestMessage])
+
+  useEffect(() => {
+    scrollToLatestMessage("smooth")
+  }, [chatHistory, scrollToLatestMessage])
 
   const appendImageAttachments = useCallback((files: File[]) => {
     const imageFiles = files.filter((f) => f.type.startsWith("image/"))
@@ -799,15 +814,20 @@ export function AiSidebar({
         ) : (
           <div className="p-4 space-y-4">
             {(() => {
-              return chatHistory.map((message, index) => (
-                <MessageBubble
-                  key={message.id}
-                  message={message}
-                  isLatestAiMessage={index === chatHistory.length - 1 && message.role === "ai"}
-                  onFocusChart={onFocusChart}
-                  onFollowUpClick={handleFollowUpClick}
-                />
-              ))
+              return (
+                <>
+                  {chatHistory.map((message, index) => (
+                    <MessageBubble
+                      key={message.id}
+                      message={message}
+                      isLatestAiMessage={index === chatHistory.length - 1 && message.role === "ai"}
+                      onFocusChart={onFocusChart}
+                      onFollowUpClick={handleFollowUpClick}
+                    />
+                  ))}
+                  <div ref={messagesEndRef} />
+                </>
+              )
             })()}
           </div>
         )}

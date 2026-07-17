@@ -278,15 +278,15 @@ export function ProjectHub({ onProjectSelect, onNewProject, onDeleteProject, onB
         {/* 项目网格：无项目时只显示「新建项目」卡片，有项目时多出项目卡片，样式一致 */}
         {!isLoading && (
           <div
-            className={cn("grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 relative", batchMode && "cursor-crosshair")}
+            className={cn("grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4 relative items-stretch", batchMode && "cursor-crosshair")}
           >
 
             {/* 新建项目卡片 - 与有项目时同一张卡片 */}
             <Card
               onClick={onNewProject}
-              className="group border border-dashed border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-slate-100/50 cursor-pointer rounded-lg transition-colors"
+              className="group h-[170px] min-w-0 border border-dashed border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-slate-100/50 cursor-pointer rounded-lg transition-colors"
             >
-              <CardContent className="flex flex-col items-center justify-center min-h-[140px] py-6">
+              <CardContent className="flex h-full flex-col items-center justify-center py-6">
                 <Plus className="w-8 h-8 text-slate-400 group-hover:text-slate-600 mb-2" />
                 <p className="text-sm font-medium text-slate-500 group-hover:text-slate-700">新建项目</p>
                 {projects.length === 0 && (
@@ -313,7 +313,7 @@ export function ProjectHub({ onProjectSelect, onNewProject, onDeleteProject, onB
                       onProjectSelect(project.id)
                     }
                   }}
-                  className={`group bg-white hover:bg-slate-50/50 cursor-pointer rounded-lg overflow-hidden border transition-colors ${
+                  className={`group h-[170px] min-w-0 bg-white hover:bg-slate-50/50 cursor-pointer rounded-lg overflow-hidden border transition-colors ${
                     isSelected && batchMode ? "ring-2 ring-blue-500 border-blue-300" : ""
                   } ${
                     project.pipelineStatus === "running"
@@ -338,7 +338,7 @@ export function ProjectHub({ onProjectSelect, onNewProject, onDeleteProject, onB
                         : "bg-slate-200"
                   }`} />
 
-                  <CardContent className="p-4 relative">
+                  <CardContent className="p-4 relative h-[167px] flex flex-col min-w-0">
                     {/* 批量选择 checkbox */}
                     {canSelect && (
                       <div className="absolute top-2 left-2 z-10" onClick={(e) => e.stopPropagation()}>
@@ -392,14 +392,14 @@ export function ProjectHub({ onProjectSelect, onNewProject, onDeleteProject, onB
                     </div>
 
                     {/* 信息 */}
-                    <div className="flex items-center gap-3 text-xs text-slate-500">
-                      <span className="flex items-center gap-1">
+                    <div className="flex items-center gap-3 text-xs text-slate-500 min-w-0">
+                      <span className="flex items-center gap-1 shrink-0">
                         <Database className="w-3 h-3" />
                         {project.rows > 0 ? `${project.rows.toLocaleString()} 条` : "—"}
                       </span>
-                      <span className="flex items-center gap-1">
+                      <span className="flex items-center gap-1 min-w-0 truncate">
                         <Clock className="w-3 h-3" />
-                        {project.createdAt}
+                        <span className="truncate">{project.createdAt}</span>
                       </span>
                     </div>
 
@@ -413,7 +413,7 @@ export function ProjectHub({ onProjectSelect, onNewProject, onDeleteProject, onB
 
                     {/* 查看结果按钮（已完成时显示） */}
                     {project.pipelineStatus === "completed" && project.datasetName && (
-                      <div className="mt-3 pt-3 border-t border-slate-100" onClick={(e) => e.stopPropagation()}>
+                      <div className="mt-auto pt-3 border-t border-slate-100" onClick={(e) => e.stopPropagation()}>
                         <button
                           onClick={() => onProjectSelect(project.id)}
                           className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline"

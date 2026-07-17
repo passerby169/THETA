@@ -4,7 +4,7 @@ import React, { useState, useRef, useCallback, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { X, LogOut, User, FolderOpen, Sparkles } from "lucide-react"
+import { X, LogOut, User, FolderOpen, Sparkles, Home } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
@@ -107,6 +107,16 @@ export function AppShell({
           <img src="/theta-logo.png" alt="THETA" className="h-9 sm:h-10 w-auto flex-shrink-0" />
           <div className="h-5 w-px bg-gradient-to-b from-transparent via-slate-200 to-transparent hidden sm:block" />
           <span className="text-xs font-medium text-slate-400 hidden sm:block truncate tracking-wide">智能分析平台</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push("/")}
+            className="h-8 gap-1.5 rounded-lg text-slate-600 hover:text-blue-700 hover:bg-blue-50 flex-shrink-0"
+          >
+            <Home className="h-4 w-4" />
+            <span className="hidden sm:inline">返回首页</span>
+          </Button>
         </div>
 
         {/* Center: Empty */}

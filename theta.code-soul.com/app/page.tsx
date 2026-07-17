@@ -178,6 +178,7 @@ export default function LandingPage() {
   const [showRegPassword, setShowRegPassword] = useState(false)
   const [showRegConfirm, setShowRegConfirm] = useState(false)
   const [regError, setRegError] = useState("")
+  const [regNotice, setRegNotice] = useState("")
   const [regFieldErrors, setRegFieldErrors] = useState<Record<string, string>>({})
   const [isRegistering, setIsRegistering] = useState(false)
   const [regSuccess, setRegSuccess] = useState(false)
@@ -289,6 +290,7 @@ export default function LandingPage() {
     setModalMode("register")
     setLoginError("")
     setRegError("")
+    setRegNotice("")
     setRegFieldErrors({})
     setRegSuccess(false)
   }
@@ -308,11 +310,18 @@ export default function LandingPage() {
 
     setIsSendingCode(true)
     setRegFieldErrors({ ...regFieldErrors, code: "" })
+    setRegNotice("")
     try {
-      await sendVerificationCode({
+      const result = await sendVerificationCode({
         email: regEmail,
         type: "register"
       })
+      setRegError("")
+      setRegNotice(
+        result.debug_code
+          ? `${result.message || "验证码已生成"}，调试验证码：${result.debug_code}`
+          : result.message || "验证码已发送，请查收邮箱"
+      )
       setCountdown(60) // 60秒倒计时
     } catch (error: any) {
       setRegError(error.message || "发送验证码失败，请稍后重试")
@@ -334,6 +343,7 @@ export default function LandingPage() {
     if (Object.keys(fieldErrs).length > 0) { setRegFieldErrors(fieldErrs); return }
     setIsRegistering(true)
     setRegError("")
+    setRegNotice("")
     setRegFieldErrors({})
     try {
       await register(regUsername, regEmail, regPassword, regFullName || undefined, regCode)
@@ -1540,6 +1550,12 @@ export default function LandingPage() {
                     <Alert variant="destructive" className="animate-in slide-in-from-top-2">
                       <AlertCircle className="h-4 w-4" />
                       <AlertDescription>{regError}</AlertDescription>
+                    </Alert>
+                  )}
+                  {regNotice && (
+                    <Alert className="border-emerald-200 bg-emerald-50 text-emerald-700 animate-in slide-in-from-top-2">
+                      <CheckCircle2 className="h-4 w-4" />
+                      <AlertDescription>{regNotice}</AlertDescription>
                     </Alert>
                   )}
 

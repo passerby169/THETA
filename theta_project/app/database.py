@@ -76,6 +76,21 @@ class TrainingJob(Base):
     file = relationship("File")
 
 
+class VerificationCode(Base):
+    __tablename__ = "verification_codes"
+    __table_args__ = (
+        Index("ix_verification_codes_email_purpose", "email", "purpose"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, nullable=False, index=True)
+    purpose = Column(String, nullable=False, default="register")
+    code_hash = Column(String, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    consumed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False)
+
+
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
     __table_args__ = (
