@@ -473,7 +473,7 @@ export const ETMAgentAPI = {
       return {
         task_id: String(status.job_id),
         status: normalizeTaskStatus(status.status),
-        progress: status.status === 'succeeded' ? 100 : status.status === 'failed' ? 0 : 50,
+        progress: status.status === 'succeeded' ? 100 : ['failed', 'cancelled'].includes(status.status) ? 0 : 50,
         message: status.message || status.status,
         error_message: status.error_message,
         created_at: status.created_at,
@@ -564,7 +564,7 @@ export const ETMAgentAPI = {
           onProgress?.({
             task_id: String(status.job_id),
             status: normalizeTaskStatus(status.status),
-            progress: status.status === 'succeeded' ? 100 : status.status === 'failed' ? 0 : 50,
+            progress: status.status === 'succeeded' ? 100 : ['failed', 'cancelled'].includes(status.status) ? 0 : 50,
             message: status.message || status.status,
         error_message: status.error_message,
           });
@@ -576,7 +576,7 @@ export const ETMAgentAPI = {
       return {
         task_id: String(finalStatus.job_id),
         status: normalizeTaskStatus(finalStatus.status),
-        progress: finalStatus.status === 'succeeded' ? 100 : finalStatus.status === 'failed' ? 0 : 50,
+        progress: finalStatus.status === 'succeeded' ? 100 : ['failed', 'cancelled'].includes(finalStatus.status) ? 0 : 50,
         message: finalStatus.message || finalStatus.status,
       };
     } catch (e) {

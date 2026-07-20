@@ -19,6 +19,7 @@ import {
   X,
   File,
   FolderOpen,
+  Square,
 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -166,6 +167,7 @@ export function AutoPipeline({
   const lastDlcMessageRef = useRef<boolean>(false)
   /** 外部训练已用时 */
   const [isDlcActive, setIsDlcActive] = useState(false)
+  const [isCancelling, setIsCancelling] = useState(false)
   const [dlcRemainingSeconds, setDlcRemainingSeconds] = useState(0)
   const dlcCountdownRef = useRef<NodeJS.Timeout | null>(null)
   /** 上传是否正在进行中（用于参数面板提前弹出时等待上传完成） */
@@ -305,9 +307,12 @@ export function AutoPipeline({
 
         // 运行中 → 恢复轮询
         setStatus("running")
-        setStartTime(task.created_at ? new Date(task.created_at) : new Date())
+        const restoredStartedAt = new Date()
+        setStartTime(restoredStartedAt)
         setOverallProgress(task.progress || 0)
         const isDlc =
+          task.status === "training" ||
+          task.status === "running" ||
           task.current_step === "dlc_training" ||
           task.current_step === "dlc" ||
           (task.current_step === "training" && task.dlc_status === "running") ||
@@ -319,7 +324,7 @@ export function AutoPipeline({
             message: task.message || "云端训练中...",
           })
           setIsDlcActive(true)
-          startExternalTrainingTimer(task.created_at ? new Date(task.created_at) : new Date(), task.progress || 0)
+          startExternalTrainingTimer(restoredStartedAt, task.progress || 0)
         }
         addLog(`恢复任务进度: ${task.message || task.status}`)
 
@@ -660,13 +665,18 @@ export function AutoPipeline({
 
         /** 总进度：外部训练模式，训练耗时较长，改为异步 */
         // 如果任务还在运行中（没有完成/失败），显示外部训练等待状态。
+        const isTerminalStatus = ["completed", "failed", "error", "cancelled"].includes(task.status)
         const isDlcStep =
-          task.status === 'running' ||
-          task.current_step === 'dlc_training' ||
-          task.current_step === 'dlc' ||
-          task.current_step === 'training' ||
-          (task.current_step === 'training' && task.dlc_status === 'running') ||
-          (task.current_step === 'training' && task.is_dlc);
+          !isTerminalStatus &&
+          (
+            task.status === 'running' ||
+            task.status === 'training' ||
+            task.current_step === 'dlc_training' ||
+            task.current_step === 'dlc' ||
+            task.current_step === 'training' ||
+            (task.current_step === 'training' && task.dlc_status === 'running') ||
+            (task.current_step === 'training' && task.is_dlc)
+          );
         if (isDlcStep) {
           if (!lastDlcMessageRef.current) {
             addLog("ℹ️ 外部训练任务已开始")
@@ -681,7 +691,7 @@ export function AutoPipeline({
           pollingRef.current = null
           dlcCountdownRef.current = null
           setIsDlcActive(true)
-          const externalStartedAt = startTime || (task.created_at ? new Date(task.created_at) : new Date())
+          const externalStartedAt = startTime || new Date()
           if (!startTime) setStartTime(externalStartedAt)
           startExternalTrainingTimer(externalStartedAt, task.progress || 0)
           pollingRef.current = setInterval(() => pollTaskStatus(tid), 5000)
@@ -742,6 +752,28 @@ export function AutoPipeline({
           }
           return
         }
+        if (task.status === "cancelled") {
+          const message = task.error_message || "训练已停止"
+          setStatus("error")
+          setEndTime(new Date())
+          setIsDlcActive(false)
+          setSteps(prev =>
+            prev.map(step =>
+              step.status === "running" ? { ...step, status: "error" as const, progress: 0, message } : step
+            )
+          )
+          addLog(`⏹️ ${message}`)
+          onError?.(message)
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current)
+            pollingRef.current = null
+          }
+          if (dlcCountdownRef.current) {
+            clearInterval(dlcCountdownRef.current)
+            dlcCountdownRef.current = null
+          }
+          return
+        }
         if (task.status === "failed" || task.status === "error") {
           // task.status === "error" handled the same way (e.g., API call failed with error message)
           setStatus("error")
@@ -762,7 +794,7 @@ export function AutoPipeline({
         console.error("Poll task error:", error)
       }
     },
-    [addLog, onComplete, onError, startExternalTrainingTimer, startTime]
+    [addLog, isDlcActive, onComplete, onDlcStarted, onError, startExternalTrainingTimer, startTime]
   )
 
   const handleUploadSubmit = async () => {
@@ -893,6 +925,33 @@ export function AutoPipeline({
     setColumnSelection(null)
     columnPanelShown.current = false
   }
+
+  const handleCancelTraining = useCallback(async () => {
+    if (!taskId || isCancelling) return
+    setIsCancelling(true)
+    try {
+      await BackendAPI.cancelTraining(parseInt(taskId, 10))
+      addLog("⏹️ 已发送停止训练请求")
+      setStatus("error")
+      setIsDlcActive(false)
+      setEndTime(new Date())
+      updateStep("training", { status: "error", progress: 0, message: "训练已停止" })
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current)
+        pollingRef.current = null
+      }
+      if (dlcCountdownRef.current) {
+        clearInterval(dlcCountdownRef.current)
+        dlcCountdownRef.current = null
+      }
+      onError?.("训练已停止")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "停止训练失败"
+      addLog(`❌ 停止训练失败: ${message}`)
+    } finally {
+      setIsCancelling(false)
+    }
+  }, [addLog, isCancelling, onError, taskId, updateStep])
 
   const handleColumnSelectConfirm = useCallback((selection: ColumnSelection) => {
     setColumnSelection(selection)
@@ -1088,10 +1147,10 @@ export function AutoPipeline({
               <div className="space-y-4 mb-4">
                 <h3 className="font-semibold text-slate-900">上传数据</h3>
                 <p className="text-sm text-slate-500">
-                  支持 CSV、TXT、PDF、DOCX、Excel 等。上传后将以「{effectiveDatasetName}」作为数据集名称自动开始分析。
+                  推荐 CSV（含 text、content、cleaned_content 等文本列）；也支持 TXT、MD、JSON/JSONL、PDF、DOC/DOCX、XLS/XLSX。
                 </p>
                 <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-2 py-1.5">
-                  分析需至少一个 CSV 文件（含文本列如 text、content、cleaned_content）。若仅上传非 CSV 文件，请先使用数据清洗生成 CSV。
+                  CSV 可选择文本列和清洗选项；非 CSV 会自动抽取文本并进入数据清洗/预处理。DTM/STM 模型仍建议仅使用 CSV。
                 </p>
                 <div
                   onDragOver={e => {
@@ -1120,7 +1179,7 @@ export function AutoPipeline({
                         type="file"
                         multiple
                         className="hidden"
-                        accept=".csv,.txt,.docx,.pdf,.xlsx,.json"
+                        accept=".csv,.txt,.md,.json,.jsonl,.doc,.docx,.pdf,.xls,.xlsx"
                         onChange={e => handleFileSelect(e.target.files)}
                       />
                     </label>
@@ -1136,7 +1195,7 @@ export function AutoPipeline({
                       />
                     </label>
                   </div>
-                  <p className="text-xs text-slate-400 mt-2">支持 CSV, TXT, DOCX, PDF, Excel, JSON｜文件夹将自动读取内部所有文件</p>
+                  <p className="text-xs text-slate-400 mt-2">支持 CSV, TXT, MD, JSON/JSONL, DOC/DOCX, PDF, Excel｜文件夹将自动读取内部文件</p>
                 </div>
                 {selectedFiles.length > 0 && (
                   <>
@@ -1228,13 +1287,29 @@ export function AutoPipeline({
                   </div>
                 </div>
                 <p className="text-slate-500">已用时间</p>
-                <Button
-                  onClick={() => onDlcStarted?.()}
-                  className="px-8 py-2 bg-blue-600 hover:bg-blue-700"
-                  size="lg"
-                >
-                  返回项目中心
-                </Button>
+                <div className="flex flex-wrap justify-center gap-3">
+                  <Button
+                    onClick={() => onDlcStarted?.()}
+                    className="px-8 py-2 bg-blue-600 hover:bg-blue-700"
+                    size="lg"
+                  >
+                    返回项目中心
+                  </Button>
+                  <Button
+                    onClick={handleCancelTraining}
+                    variant="outline"
+                    className="px-8 py-2 border-red-200 text-red-600 hover:bg-red-50"
+                    size="lg"
+                    disabled={!taskId || isCancelling}
+                  >
+                    {isCancelling ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Square className="w-4 h-4 mr-2" />
+                    )}
+                    {isCancelling ? "停止中..." : "停止训练"}
+                  </Button>
+                </div>
               </div>
             ) : (
               <Collapsible open={showLogs} onOpenChange={setShowLogs} className="flex-1 flex flex-col min-h-0">

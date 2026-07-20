@@ -10,10 +10,12 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import queue
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +42,12 @@ WORK_ROOT = Path(os.getenv("CPU_WORKER_WORK_ROOT", PROJECT_DIR / "worker_runs"))
 KEEP_WORKDIR = os.getenv("CPU_WORKER_KEEP_WORKDIR", "0").lower() in {"1", "true", "yes"}
 DEFAULT_TIMEOUT = int(os.getenv("CPU_WORKER_JOB_TIMEOUT_SECONDS", str(60 * 60 * 12)))
 CALLBACK_BASE_URL = os.getenv("CPU_WORKER_CALLBACK_BASE_URL") or os.getenv("API_BASE_URL")
+CANCEL_KEY_PREFIX = os.getenv("REDIS_TRAINING_CANCEL_PREFIX", "theta:training:cancel")
+SUPPORTED_RAW_SUFFIXES = {".csv", ".txt", ".md", ".json", ".jsonl", ".doc", ".docx", ".pdf", ".xls", ".xlsx"}
+
+
+class CancelledJob(RuntimeError):
+    pass
 
 
 def redis_client() -> redis.Redis:
@@ -53,6 +61,25 @@ def redis_client() -> redis.Redis:
         socket_timeout=POLL_TIMEOUT_SECONDS + 15,
         health_check_interval=30,
     )
+
+
+def cancel_key(job_id: Any) -> str:
+    return f"{CANCEL_KEY_PREFIX}:{job_id}"
+
+
+def is_cancelled(client: redis.Redis | None, job_id: Any) -> bool:
+    if client is None or job_id in {None, ""}:
+        return False
+    try:
+        return bool(client.get(cancel_key(job_id)))
+    except redis.exceptions.RedisError as exc:
+        print(f"[cancel] Redis check failed for job {job_id}: {exc}", flush=True)
+        return False
+
+
+def ensure_not_cancelled(client: redis.Redis | None, job_id: Any) -> None:
+    if is_cancelled(client, job_id):
+        raise CancelledJob("Training cancelled by user")
 
 
 def utc_now() -> str:
@@ -142,7 +169,25 @@ def find_baseline_exp(result_dir: Path, username: str, dataset: str, model: str,
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
-def run_command(cmd: list[str], env: dict[str, str], cwd: Path, timeout: int) -> None:
+def terminate_process(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=10)
+
+
+def run_command(
+    cmd: list[str],
+    env: dict[str, str],
+    cwd: Path,
+    timeout: int,
+    cancel_client: redis.Redis | None = None,
+    job_id: Any = None,
+) -> None:
     print("[run] " + " ".join(cmd), flush=True)
     process = subprocess.Popen(
         cmd,
@@ -155,13 +200,43 @@ def run_command(cmd: list[str], env: dict[str, str], cwd: Path, timeout: int) ->
         errors="replace",
     )
     assert process.stdout is not None
-    for line in process.stdout:
-        print(line.rstrip(), flush=True)
-    try:
-        return_code = process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        raise RuntimeError(f"Command timed out after {timeout} seconds: {' '.join(cmd)}")
+    output_queue: queue.Queue[str | None] = queue.Queue()
+
+    def read_output() -> None:
+        try:
+            for line in process.stdout:
+                output_queue.put(line.rstrip())
+        finally:
+            output_queue.put(None)
+
+    threading.Thread(target=read_output, daemon=True).start()
+    started_at = time.time()
+    output_done = False
+    return_code: int | None = None
+
+    while True:
+        if is_cancelled(cancel_client, job_id):
+            terminate_process(process)
+            raise CancelledJob("Training cancelled by user")
+
+        while True:
+            try:
+                item = output_queue.get_nowait()
+            except queue.Empty:
+                break
+            if item is None:
+                output_done = True
+            else:
+                print(item, flush=True)
+
+        return_code = process.poll()
+        if return_code is not None and output_done:
+            break
+        if time.time() - started_at > timeout:
+            terminate_process(process)
+            raise RuntimeError(f"Command timed out after {timeout} seconds: {' '.join(cmd)}")
+        time.sleep(0.2)
+
     if return_code != 0:
         raise RuntimeError(f"Command failed with exit code {return_code}: {' '.join(cmd)}")
 
@@ -200,7 +275,7 @@ def append_embedding_args(cmd: list[str], payload: dict[str, Any]) -> None:
             cmd.extend([cli_name, str(value)])
 
 
-def process_job(payload: dict[str, Any]) -> None:
+def process_job(payload: dict[str, Any], client: redis.Redis | None = None) -> None:
     args = build_base_args(payload)
     dataset = args["dataset"]
     model = args["model"]
@@ -228,13 +303,18 @@ def process_job(payload: dict[str, Any]) -> None:
     try:
         callback(payload, "running")
         write_training_log(output_prefix, "running", "CPU worker started")
+        ensure_not_cancelled(client, payload.get("job_id"))
 
         input_key = payload.get("input_key")
         if not input_key:
             raise RuntimeError("Training payload is missing input_key")
-        raw_csv = raw_dir / f"{dataset}_raw.csv"
-        raw_csv.write_bytes(storage.get_object_bytes(str(input_key)))
-        print(f"[job {payload['job_id']}] downloaded {input_key} -> {raw_csv}", flush=True)
+        source_name = str(payload.get("filename") or Path(str(input_key)).name)
+        suffix = Path(source_name).suffix.lower() or Path(str(input_key)).suffix.lower() or ".csv"
+        if suffix not in SUPPORTED_RAW_SUFFIXES:
+            suffix = ".csv"
+        raw_input = raw_dir / f"{dataset}_raw{suffix}"
+        raw_input.write_bytes(storage.get_object_bytes(str(input_key)))
+        print(f"[job {payload['job_id']}] downloaded {input_key} -> {raw_input}", flush=True)
 
         prepare_cmd = [
             sys.executable,
@@ -253,7 +333,7 @@ def process_job(payload: dict[str, Any]) -> None:
             args["batch_size"],
             "--clean",
             "--raw-input",
-            str(raw_csv),
+            str(raw_input),
             "--gpu",
             "-1",
             "--user_id",
@@ -263,7 +343,8 @@ def process_job(payload: dict[str, Any]) -> None:
         if model == "theta":
             prepare_cmd.extend(["--exp_name", run_id])
             append_embedding_args(prepare_cmd, payload)
-        run_command(prepare_cmd, env=env, cwd=MODELS_DIR, timeout=timeout)
+        run_command(prepare_cmd, env=env, cwd=MODELS_DIR, timeout=timeout, cancel_client=client, job_id=payload.get("job_id"))
+        ensure_not_cancelled(client, payload.get("job_id"))
 
         pipeline_cmd = [
             sys.executable,
@@ -300,7 +381,8 @@ def process_job(payload: dict[str, Any]) -> None:
             "zh" if args["language"].lower() in {"zh", "chinese", "cn"} else "en",
         ]
         append_embedding_args(pipeline_cmd, payload)
-        run_command(pipeline_cmd, env=env, cwd=MODELS_DIR, timeout=timeout)
+        run_command(pipeline_cmd, env=env, cwd=MODELS_DIR, timeout=timeout, cancel_client=client, job_id=payload.get("job_id"))
+        ensure_not_cancelled(client, payload.get("job_id"))
 
         if model == "theta":
             result_source = find_latest_theta_exp(result_dir, dataset, args["model_size"])
@@ -318,6 +400,11 @@ def process_job(payload: dict[str, Any]) -> None:
         )
         callback(payload, "succeeded")
         print(f"[job {payload['job_id']}] succeeded; uploaded {uploaded} files", flush=True)
+    except CancelledJob as exc:
+        message = str(exc)
+        print(f"[job {payload.get('job_id')}] cancelled: {message}", flush=True)
+        write_training_log(output_prefix, "cancelled", message)
+        callback(payload, "cancelled", message)
     except Exception as exc:
         message = str(exc)
         print(f"[job {payload.get('job_id')}] failed: {message}", flush=True)
@@ -349,7 +436,7 @@ def main() -> None:
         try:
             payload = json.loads(raw_payload)
             print(f"[worker] received job {payload.get('job_id')} run_id={payload.get('run_id')}", flush=True)
-            process_job(payload)
+            process_job(payload, client)
         except Exception:
             time.sleep(2)
 

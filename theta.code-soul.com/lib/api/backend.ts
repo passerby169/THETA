@@ -53,7 +53,7 @@ export interface TrainStartResponse {
 
 export interface TrainStatusResponse {
   job_id: number;
-  status: 'pending' | 'creating' | 'running' | 'succeeded' | 'failed';
+  status: 'pending' | 'creating' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   dlc_job_id?: string;
   error_message?: string;
   created_at: string;
@@ -224,6 +224,16 @@ export const BackendAPI = {
   },
 
   /**
+   * 取消训练任务
+   * POST /api/train/{job_id}/cancel
+   */
+  async cancelTraining(jobId: number): Promise<{ success: boolean; message: string; status: string }> {
+    return apiFetch(`/api/train/${jobId}/cancel`, {
+      method: 'POST',
+    });
+  },
+
+  /**
    * 获取训练任务列表
    * GET /api/train/jobs
    */
@@ -380,7 +390,7 @@ export const SimpleETMAPI = {
       const status = await BackendAPI.getTrainStatus(jobId);
       onProgress?.(status);
 
-      if (['succeeded', 'failed'].includes(status.status)) {
+      if (['succeeded', 'failed', 'cancelled'].includes(status.status)) {
         return status;
       }
 

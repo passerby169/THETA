@@ -21,6 +21,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 import requests
+import redis
 from sqlalchemy.orm import Session
 from starlette.responses import Response, StreamingResponse
 
@@ -36,6 +37,7 @@ ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 KNOWN_MODELS = {"theta", "nvdm", "bertopic", "lda", "hdp", "stm", "btm", "ctm", "etm", "dtm", "prodlda", "gsm"}
+TRAINING_CANCEL_KEY_PREFIX = os.getenv("REDIS_TRAINING_CANCEL_PREFIX", "theta:training:cancel")
 
 Base.metadata.create_all(bind=engine)
 
@@ -807,6 +809,8 @@ def start_training(request: TrainStartRequest, current_user: User = Depends(get_
         "callback_secret": SECRET_KEY,
         "username": current_user.username,
         "dataset_name": dataset_name,
+        "filename": file_record.filename,
+        "file_type": file_record.file_type,
         "input_key": file_record.file_path,
         "raw_data_prefix": f"raw_data/{current_user.username}/{dataset_name}/",
         "output_prefix": f"results/{current_user.username}/{dataset_name}/{request.model_type}/{run_id}/",
@@ -850,12 +854,40 @@ def get_job_for_user(job_id: int, user_id: int, db: Session) -> TrainingJob:
     return job
 
 
+def training_cancel_key(job_id: int) -> str:
+    return f"{TRAINING_CANCEL_KEY_PREFIX}:{job_id}"
+
+
+def set_training_cancel_flag(job_id: int) -> None:
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        return
+    try:
+        ttl = int(os.getenv("TRAINING_CANCEL_TTL_SECONDS", "86400"))
+        client = redis.from_url(
+            redis_url,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+        )
+        client.setex(training_cancel_key(job_id), ttl, "1")
+    except Exception as exc:
+        print(f"[cancel] failed to write Redis cancel flag for job {job_id}: {exc}")
+
+
 @app.get("/api/train/{job_id}/status", response_model=TrainingStatusResponse)
 def get_training_status(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     job = get_job_for_user(job_id, current_user.id, db)
-    message = job.error_message or (
-        "Training completed" if job.status == "succeeded" else "Training job is running on external training worker"
-    )
+    if job.error_message:
+        message = job.error_message
+    elif job.status == "succeeded":
+        message = "Training completed"
+    elif job.status == "cancelled":
+        message = "Training cancelled"
+    elif job.status == "failed":
+        message = "Training failed"
+    else:
+        message = "Training job is running on external training worker"
     return TrainingStatusResponse(
         job_id=job.id,
         status=job.status,
@@ -864,6 +896,19 @@ def get_training_status(job_id: int, current_user: User = Depends(get_current_us
         created_at=job.created_at,
         message=message,
     )
+
+
+@app.post("/api/train/{job_id}/cancel")
+def cancel_training(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    job = get_job_for_user(job_id, current_user.id, db)
+    if job.status in {"succeeded", "failed", "cancelled"}:
+        return {"success": True, "message": f"Job already {job.status}", "status": job.status}
+
+    set_training_cancel_flag(job.id)
+    job.status = "cancelled"
+    job.error_message = "训练已由用户终止"
+    db.commit()
+    return {"success": True, "message": "Training cancellation requested", "status": job.status}
 
 
 @app.get("/api/train/{job_id}/metrics", response_model=TrainingMetricsResponse)
@@ -950,8 +995,10 @@ def training_callback(request: dict, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Training job not found")
     status_value = request.get("status")
-    if status_value not in {"running", "succeeded", "failed"}:
+    if status_value not in {"running", "succeeded", "failed", "cancelled"}:
         raise HTTPException(status_code=400, detail="Invalid status")
+    if job.status == "cancelled" and status_value in {"running", "succeeded"}:
+        return {"success": True, "message": f"Job {job.id} remains cancelled"}
     job.status = status_value
     job.run_id = request.get("run_id") or job.run_id
     job.error_message = request.get("error_message") or job.error_message
