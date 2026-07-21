@@ -422,6 +422,8 @@ def main() -> None:
     WORK_ROOT.mkdir(parents=True, exist_ok=True)
     client = redis_client()
     print(f"[worker] CPU queue worker started; queue={QUEUE_NAME}", flush=True)
+    print("[worker] waiting for jobs; keep this window open and press Ctrl+C to stop", flush=True)
+    last_idle_log_at = 0.0
     while True:
         try:
             item = client.brpop(QUEUE_NAME, timeout=POLL_TIMEOUT_SECONDS)
@@ -431,6 +433,10 @@ def main() -> None:
             client = redis_client()
             continue
         if item is None:
+            now = time.time()
+            if now - last_idle_log_at >= 60:
+                print("[worker] idle; waiting for jobs...", flush=True)
+                last_idle_log_at = now
             continue
         _, raw_payload = item
         try:

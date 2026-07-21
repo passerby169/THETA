@@ -170,15 +170,18 @@ export function AutoPipeline({
   const [isCancelling, setIsCancelling] = useState(false)
   const [dlcRemainingSeconds, setDlcRemainingSeconds] = useState(0)
   const dlcCountdownRef = useRef<NodeJS.Timeout | null>(null)
+  const externalStartedAtRef = useRef<number | null>(null)
   /** 上传是否正在进行中（用于参数面板提前弹出时等待上传完成） */
   const uploadInProgressRef = useRef(false)
   /** 用户在参数面板确认的配置（上传未完成时暂存，等待上传完成后启动流水线） */
   const pendingConfigRef = useRef<{ config: AnalysisConfig; columnSelection: ColumnSelection | null } | null>(null)
 
   const startExternalTrainingTimer = useCallback((startedAt?: Date | null, progress?: number) => {
-    clearInterval(dlcCountdownRef.current!)
-    const startedAtMs = startedAt?.getTime() || Date.now()
+    if (!externalStartedAtRef.current) {
+      externalStartedAtRef.current = startedAt?.getTime() || Date.now()
+    }
     const tick = () => {
+      const startedAtMs = externalStartedAtRef.current || Date.now()
       const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000))
       setDlcRemainingSeconds(elapsedSeconds)
       if (typeof progress === "number") {
@@ -186,6 +189,7 @@ export function AutoPipeline({
       }
     }
     tick()
+    if (dlcCountdownRef.current) return
     dlcCountdownRef.current = setInterval(tick, 1000)
   }, [])
   /** 用于在 handleConfigConfirm 中访问最新 selectedFiles（避免闭包陈旧） */
@@ -252,6 +256,7 @@ export function AutoPipeline({
       setIsDlcActive(true)
       setOverallProgress(0)
       const startedAt = new Date()
+      externalStartedAtRef.current = startedAt.getTime()
       setStartTime(startedAt)
       startExternalTrainingTimer(startedAt, 0)
       addLog("ℹ️ 外部训练任务已开始")
@@ -344,6 +349,7 @@ export function AutoPipeline({
           setIsDlcActive(true)
           setOverallProgress(0)
           const startedAt = new Date()
+          externalStartedAtRef.current = startedAt.getTime()
           setStartTime(startedAt)
           startExternalTrainingTimer(startedAt, 0)
           addLog("⚠️ 无法获取任务详情，已保持外部训练等待状态")
@@ -477,7 +483,9 @@ export function AutoPipeline({
       }
 
       setStatus("running")
-      setStartTime(new Date())
+      const pipelineStartedAt = new Date()
+      externalStartedAtRef.current = null
+      setStartTime(pipelineStartedAt)
       updateStep("upload", { status: "completed", progress: 100, message: "上传完成" })
       addLog(`数据集: ${datasetForPipeline}, 模型: ${firstModel}, 主题数: ${numTopics}`)
 
@@ -687,9 +695,7 @@ export function AutoPipeline({
 
           // 保留状态轮询，只用本地计时器展示真实已用时。
           clearInterval(pollingRef.current!)
-          clearInterval(dlcCountdownRef.current!)
           pollingRef.current = null
-          dlcCountdownRef.current = null
           setIsDlcActive(true)
           const externalStartedAt = startTime || new Date()
           if (!startTime) setStartTime(externalStartedAt)
@@ -750,6 +756,11 @@ export function AutoPipeline({
             clearInterval(pollingRef.current)
             pollingRef.current = null
           }
+          if (dlcCountdownRef.current) {
+            clearInterval(dlcCountdownRef.current)
+            dlcCountdownRef.current = null
+          }
+          externalStartedAtRef.current = null
           return
         }
         if (task.status === "cancelled") {
@@ -772,6 +783,7 @@ export function AutoPipeline({
             clearInterval(dlcCountdownRef.current)
             dlcCountdownRef.current = null
           }
+          externalStartedAtRef.current = null
           return
         }
         if (task.status === "failed" || task.status === "error") {
@@ -789,6 +801,11 @@ export function AutoPipeline({
             clearInterval(pollingRef.current)
             pollingRef.current = null
           }
+          if (dlcCountdownRef.current) {
+            clearInterval(dlcCountdownRef.current)
+            dlcCountdownRef.current = null
+          }
+          externalStartedAtRef.current = null
         }
       } catch (error) {
         console.error("Poll task error:", error)
@@ -913,6 +930,7 @@ export function AutoPipeline({
     setTaskId(null)
     setLogs([])
     setStartTime(null)
+    externalStartedAtRef.current = null
     setEndTime(null)
     setResult(null)
     setSelectedFiles([])
@@ -944,6 +962,7 @@ export function AutoPipeline({
         clearInterval(dlcCountdownRef.current)
         dlcCountdownRef.current = null
       }
+      externalStartedAtRef.current = null
       onError?.("训练已停止")
     } catch (error) {
       const message = error instanceof Error ? error.message : "停止训练失败"
