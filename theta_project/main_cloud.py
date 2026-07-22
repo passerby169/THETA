@@ -402,31 +402,48 @@ def file_to_response(file: File) -> FileResponse:
     )
 
 
-def result_path_key(username: str, dataset: str, model: str) -> str:
-    prefix1 = f"results/{username}/{dataset}/{model}/"
-    run_ids1 = [
-        entry.key[len(prefix1):].strip("/")
-        for entry in storage.list_objects(prefix1, delimiter="/")
-        if entry.is_prefix
-    ]
-    run_ids1 = [run_id for run_id in run_ids1 if run_id and not run_id.startswith(model)]
-    if run_ids1:
-        return f"results/{username}/{dataset}/{model}/{sorted(run_ids1)[-1]}"
+def _is_result_artifact(key: str) -> bool:
+    """Return true only for files that prove a run has displayable results."""
+    name = key.rsplit("/", 1)[-1].lower()
+    return (
+        name == "topic_words.json"
+        or name == "主题表.csv"
+        or (name.startswith("metrics") and name.endswith(".json"))
+        or name.endswith((".png", ".jpg", ".jpeg", ".html"))
+    )
 
-    prefix2 = f"results/{username}/{dataset}/"
-    run_ids2: list[str] = []
-    for entry in storage.list_objects(prefix2, delimiter="/"):
-        if not entry.is_prefix:
+
+def _result_run_paths(username: str, dataset: str, model: str) -> list[str]:
+    """Discover current and legacy result layouts from object keys.
+
+    Some S3-compatible providers do not consistently return CommonPrefixes for
+    delimiter listings. Recursive key inspection works for both layouts:
+    results/user/dataset/model/run/... and results/user/dataset/run/model/....
+    """
+    prefix = f"results/{username}/{dataset}/"
+    candidates: dict[str, datetime] = {}
+    for entry in storage.list_objects(prefix):
+        if entry.is_prefix or not _is_result_artifact(entry.key):
             continue
-        potential = entry.key[len(prefix2):].strip("/")
-        if not potential or potential in KNOWN_MODELS or "," in potential:
+        relative = entry.key[len(prefix):].strip("/")
+        parts = relative.split("/")
+        result_path = ""
+        if len(parts) >= 3 and parts[0] == model:
+            result_path = f"{prefix}{model}/{parts[1]}"
+        elif len(parts) >= 3 and parts[1] == model:
+            result_path = f"{prefix}{parts[0]}/{model}"
+        if not result_path:
             continue
-        model_prefix = f"results/{username}/{dataset}/{potential}/{model}/"
-        if storage.list_objects(model_prefix, delimiter="/"):
-            run_ids2.append(potential)
-    if run_ids2:
-        return f"results/{username}/{dataset}/{sorted(run_ids2)[-1]}/{model}"
-    return ""
+        modified = entry.last_modified or datetime.min
+        if modified.tzinfo is not None:
+            modified = modified.replace(tzinfo=None)
+        candidates[result_path] = max(candidates.get(result_path, datetime.min), modified)
+    return [path for path, _ in sorted(candidates.items(), key=lambda item: (item[1], item[0]), reverse=True)]
+
+
+def result_path_key(username: str, dataset: str, model: str) -> str:
+    paths = _result_run_paths(username, dataset, model)
+    return paths[0] if paths else ""
 
 
 def result_objects(result_path: str):
@@ -1090,17 +1107,15 @@ def list_datasets(current_user: User = Depends(get_current_user)):
 def get_available_models(dataset: str, current_user: User = Depends(get_current_user)):
     prefix = f"results/{current_user.username}/{dataset}/"
     models = set()
-    for entry in storage.list_objects(prefix, delimiter="/"):
-        if not entry.is_prefix:
+    for entry in storage.list_objects(prefix):
+        if entry.is_prefix or not _is_result_artifact(entry.key):
             continue
         relative = entry.key[len(prefix):].strip("/")
-        if relative in KNOWN_MODELS:
-            models.add(relative)
-        else:
-            for sub in storage.list_objects(entry.key, delimiter="/"):
-                sub_relative = sub.key[len(entry.key):].strip("/")
-                if sub_relative in KNOWN_MODELS:
-                    models.add(sub_relative)
+        parts = relative.split("/")
+        if parts and parts[0] in KNOWN_MODELS:
+            models.add(parts[0])
+        elif len(parts) >= 2 and parts[1] in KNOWN_MODELS:
+            models.add(parts[1])
     return {"dataset": dataset, "models": sorted(models)}
 
 

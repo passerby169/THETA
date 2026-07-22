@@ -24,6 +24,7 @@ import { TopicWordsTab } from "@/components/results/topic-words-tab"
 import { MetricsTab } from "@/components/results/metrics-tab"
 import { VisualizationTab } from "@/components/results/visualization-tab"
 import { ExportTab } from "@/components/results/export-tab"
+import { RefreshCw } from "lucide-react"
 
 /** 指标展示名与方向说明：↑ 越高越好 | ↓ 越低越好 | → 越接近 0 越好 */
 // Helper to generate timestamp
@@ -92,8 +93,13 @@ function DashboardContent() {
   const pollingTimerRef = useRef<number | null>(null)
   const syncTimerRef = useRef<number | null>(null)
   const refreshProjectsRef = useRef<() => Promise<void>>(async () => {})
+  const projectsRef = useRef<WorkspaceProject[]>([])
 
   const handleSendMessageRef = useRef<(payload: string | SendMessagePayload) => void | Promise<void>>(() => {})
+
+  useEffect(() => {
+    projectsRef.current = projects
+  }, [projects])
 
   const normalizeProjectKey = useCallback((value?: string | null) => {
     return (value || "").trim().toLowerCase()
@@ -303,7 +309,7 @@ function DashboardContent() {
   // 轮询训练状态
   useEffect(() => {
     const pollTrainingStatus = async () => {
-      const runningJobs = projects.filter(p => p.pipelineStatus === "running" || p.status === "vectorizing");
+      const runningJobs = projectsRef.current.filter(p => p.pipelineStatus === "running" || p.status === "vectorizing");
       if (runningJobs.length === 0) return;
 
       const jobIds: number[] = [];
@@ -346,7 +352,7 @@ function DashboardContent() {
 
     pollingTimerRef.current = window.setInterval(pollTrainingStatus, 10000);
     return () => { if (pollingTimerRef.current) window.clearInterval(pollingTimerRef.current); };
-  }, [projects]);
+  }, []);
 
   // 定期同步项目列表已移除，避免打断上传操作
   // 需要刷新请手动点击刷新按钮
@@ -1080,17 +1086,24 @@ function ProjectResultView({ project }: { project: WorkspaceProject }) {
   const [selectedModel, setSelectedModel] = useState<string | null>(null)
   const [loadingModels, setLoadingModels] = useState(true)
   const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [modelLoadError, setModelLoadError] = useState<string | null>(null)
+  const [modelReloadToken, setModelReloadToken] = useState(0)
 
   // 获取用户选择的模型列表
   const userSelectedModels = project.models || []
   const userSelectedModelKey = userSelectedModels.join(",")
 
-  // 获取可用的模型列表（信任 /models API 的结果，不再二次验证 topic-words）
+  // 获取可用模型。对象存储完成上传后，列表索引可能短暂延迟，因此只做有限重试。
   useEffect(() => {
     let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    const maxAttempts = 5
 
-    const loadAvailableModels = async () => {
-      setLoadingModels(availableModels.length === 0)
+    const loadAvailableModels = async (attempt = 1) => {
+      if (attempt === 1) {
+        setLoadingModels(true)
+        setModelLoadError(null)
+      }
       try {
         const availableResponse = await apiFetch<{ models?: string[] }>(
           API_BASE,
@@ -1102,29 +1115,37 @@ function ProjectResultView({ project }: { project: WorkspaceProject }) {
           const models = availableResponse.models
           setAvailableModels(models)
           setSelectedModel(current => current && models.includes(current) ? current : models[0])
+          setModelLoadError(null)
+          setLoadingModels(false)
         } else {
+          if (attempt < maxAttempts) {
+            retryTimer = setTimeout(() => loadAvailableModels(attempt + 1), 2000)
+            return
+          }
           setAvailableModels([])
           setSelectedModel(null)
+          setModelLoadError("训练已完成，但暂未在云端找到结果文件。请重新加载；若仍为空，请确认后端已部署最新代码。")
+          setLoadingModels(false)
         }
-      } catch {
+      } catch (error) {
         if (cancelled) return
-        // 后端 API 不可用时回退
-        setAvailableModels(userSelectedModels.length > 0 ? userSelectedModels : [])
-        if (userSelectedModels.length > 0) {
-          setSelectedModel(current => current && userSelectedModels.includes(current) ? current : userSelectedModels[0])
-        } else {
-          setSelectedModel(null)
+        if (attempt < maxAttempts) {
+          retryTimer = setTimeout(() => loadAvailableModels(attempt + 1), 2000)
+          return
         }
-      } finally {
-        if (!cancelled) setLoadingModels(false)
+        setAvailableModels([])
+        setSelectedModel(null)
+        setModelLoadError(error instanceof Error ? error.message : "加载模型结果失败")
+        setLoadingModels(false)
       }
     }
 
     loadAvailableModels()
     return () => {
       cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
     }
-  }, [dataset, userSelectedModelKey, availableModels.length])
+  }, [dataset, userSelectedModelKey, modelReloadToken])
 
   // 模型标签映射
   const MODEL_LABELS: Record<string, string> = {
@@ -1160,9 +1181,15 @@ function ProjectResultView({ project }: { project: WorkspaceProject }) {
             数据集: {dataset} · 模式: {mode} · 主题数: {project.numTopics || 20}
           </p>
         </div>
-        <div className="flex flex-col items-center justify-center py-20 gap-2 text-slate-500">
-          <p className="text-sm">暂无模型结果</p>
-          <p className="text-xs text-slate-400">请先运行训练任务生成结果</p>
+        <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-500">
+          <p className="text-sm font-medium text-slate-700">暂未读取到模型结果</p>
+          <p className="max-w-xl text-center text-xs leading-5 text-slate-500">
+            {modelLoadError || "云端结果索引可能仍在同步，请稍后重新加载。"}
+          </p>
+          <Button variant="outline" size="sm" onClick={() => setModelReloadToken(value => value + 1)}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            重新加载结果
+          </Button>
         </div>
       </div>
     )
