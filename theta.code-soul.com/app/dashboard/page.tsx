@@ -44,7 +44,7 @@ interface WorkspaceProject extends Project {
   mode?: "zero_shot" | "unsupervised" | "supervised"
   models?: string[]
   numTopics?: number
-  pipelineStatus?: "running" | "completed" | "error"
+  pipelineStatus?: "running" | "completed" | "error" | "cancelled" | "draft"
   dbProjectId?: number  // 数据库项目 ID，用于更新/删除
   taskId?: string | null  // 关联的训练任务 ID
 }
@@ -143,7 +143,7 @@ function DashboardContent() {
           if (!ds) continue
           const existing = taskByDataset.get(ds)
           if (!existing || (t.status === "completed" && existing.status !== "completed")) {
-            taskByDataset.set(ds, { task_id: t.task_id, status: t.status, pipeline_status: t.status === "completed" ? "completed" : ["failed", "cancelled"].includes(t.status) ? "error" : "running" })
+            taskByDataset.set(ds, { task_id: t.task_id, status: t.status, pipeline_status: t.status === "completed" ? "completed" : t.status === "cancelled" ? "cancelled" : t.status === "failed" ? "error" : "running" })
           }
         }
 
@@ -165,6 +165,7 @@ function DashboardContent() {
           }
           const derivedPipelineStatus = effectivePipelineStatus === "completed" ? "completed"
             : effectivePipelineStatus === "error" ? "error"
+            : effectivePipelineStatus === "cancelled" ? "cancelled"
             : effectivePipelineStatus === "running" ? "running"
             : effectiveTaskId ? "running"
             : p.dataset_name && datasetsWithResults.has(p.dataset_name) ? "completed"
@@ -180,6 +181,7 @@ function DashboardContent() {
             createdAt: p.created_at ? "已保存" : "刚刚",
             status: derivedPipelineStatus === "completed" ? "completed"
               : derivedPipelineStatus === "error" ? "no_result"
+              : derivedPipelineStatus === "cancelled" ? "draft"
               : derivedPipelineStatus === "running" ? "vectorizing"
               : p.dataset_name ? "draft"
               : "draft" as const,
@@ -330,6 +332,7 @@ function DashboardContent() {
             if (result) {
               const newStatus = result.status === "completed" || result.status === "succeeded" ? "completed"
                 : result.status === "failed" ? "error"
+                : result.status === "cancelled" ? "cancelled"
                 : result.status === "running" || result.status === "training" ? "running"
                 : p.pipelineStatus;
               return {
@@ -337,6 +340,7 @@ function DashboardContent() {
                 pipelineStatus: newStatus,
                 status: newStatus === "completed" ? "completed"
                   : newStatus === "error" ? "no_result"
+                  : newStatus === "cancelled" ? "draft"
                   : newStatus === "running" ? "vectorizing"
                   : p.status,
                 hasResults: newStatus === "completed" ? true : p.hasResults,
@@ -381,7 +385,7 @@ function DashboardContent() {
         if (!ds) continue
         const existing = taskByDataset.get(ds)
         if (!existing || (t.status === "completed" && existing.status !== "completed")) {
-          taskByDataset.set(ds, { task_id: t.task_id, status: t.status, pipeline_status: t.status === "completed" ? "completed" : ["failed", "cancelled"].includes(t.status) ? "error" : "running" })
+          taskByDataset.set(ds, { task_id: t.task_id, status: t.status, pipeline_status: t.status === "completed" ? "completed" : t.status === "cancelled" ? "cancelled" : t.status === "failed" ? "error" : "running" })
         }
       }
 
@@ -401,6 +405,7 @@ function DashboardContent() {
         }
         const derivedPipelineStatus = effectivePipelineStatus === "completed" ? "completed"
           : effectivePipelineStatus === "error" ? "error"
+          : effectivePipelineStatus === "cancelled" ? "cancelled"
           : effectivePipelineStatus === "running" ? "running"
           : effectiveTaskId ? "running"
           : p.dataset_name && datasetsWithResults.has(p.dataset_name) ? "completed"
@@ -415,6 +420,7 @@ function DashboardContent() {
           createdAt: p.created_at ? "已保存" : "刚刚",
           status: derivedPipelineStatus === "completed" ? "completed"
             : derivedPipelineStatus === "error" ? "no_result"
+            : derivedPipelineStatus === "cancelled" ? "draft"
             : derivedPipelineStatus === "running" ? "vectorizing"
             : p.dataset_name ? "draft"
             : "draft" as const,
@@ -953,6 +959,7 @@ function DashboardContent() {
     const shouldShowConfig =
       currentProject.pipelineStatus === "running" ||
       currentProject.pipelineStatus === "error" ||
+      currentProject.pipelineStatus === "cancelled" ||
       (currentProject.status === "draft" && !currentProject.hasResults) ||
       currentProject.pipelineStatus === undefined && !currentProject.hasResults;
 
@@ -986,6 +993,20 @@ function DashboardContent() {
           }}
           onComplete={(result) => handlePipelineComplete(currentProject.id, result, currentProject.dbProjectId)}
           onError={() => handlePipelineError(currentProject.id)}
+          onCancelled={() => {
+            setProjects(prev => prev.map(p =>
+              p.id === currentProject.id
+                ? { ...p, status: "draft", pipelineStatus: "cancelled" }
+                : p
+            ))
+          }}
+          onRestart={() => {
+            setProjects(prev => prev.map(p =>
+              p.id === currentProject.id
+                ? { ...p, status: "draft", taskId: null, pipelineStatus: "draft", hasResults: false }
+                : p
+            ))
+          }}
           onTaskCreated={async (tid) => {
             setProjects(prev => prev.map(p =>
               p.id === currentProject.id

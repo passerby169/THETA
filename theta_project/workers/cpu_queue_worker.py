@@ -11,6 +11,7 @@ import json
 import mimetypes
 import os
 import queue
+import signal
 import shutil
 import subprocess
 import sys
@@ -151,10 +152,16 @@ def content_type_for(path: Path) -> str:
     return guessed or "application/octet-stream"
 
 
-def upload_tree(local_dir: Path, output_prefix: str) -> int:
+def upload_tree(
+    local_dir: Path,
+    output_prefix: str,
+    cancel_client: redis.Redis | None = None,
+    job_id: Any = None,
+) -> int:
     uploaded = 0
     prefix = output_prefix.rstrip("/")
     for path in local_dir.rglob("*"):
+        ensure_not_cancelled(cancel_client, job_id)
         if not path.is_file():
             continue
         rel = path.relative_to(local_dir).as_posix()
@@ -185,12 +192,27 @@ def find_baseline_exp(result_dir: Path, username: str, dataset: str, model: str,
 def terminate_process(process: subprocess.Popen[str]) -> None:
     if process.poll() is not None:
         return
-    process.terminate()
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+    else:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            pass
     try:
-        process.wait(timeout=10)
+        process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         process.kill()
-        process.wait(timeout=10)
+        process.wait(timeout=5)
 
 
 def friendly_error_message(exc: Exception) -> str:
@@ -222,6 +244,11 @@ def run_command(
     job_id: Any = None,
 ) -> None:
     print("[run] " + " ".join(cmd), flush=True)
+    process_options: dict[str, Any] = {}
+    if os.name == "nt":
+        process_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        process_options["start_new_session"] = True
     process = subprocess.Popen(
         cmd,
         cwd=str(cwd),
@@ -231,6 +258,7 @@ def run_command(
         text=True,
         encoding="utf-8",
         errors="replace",
+        **process_options,
     )
     assert process.stdout is not None
     output_queue: queue.Queue[str | None] = queue.Queue()
@@ -340,9 +368,9 @@ def process_job(payload: dict[str, Any], client: redis.Redis | None = None) -> N
     env["WORKSPACE_DIR"] = str(work_dir / "workspace")
 
     try:
+        ensure_not_cancelled(client, payload.get("job_id"))
         callback(payload, "running")
         write_training_log(output_prefix, "running", "CPU worker started")
-        ensure_not_cancelled(client, payload.get("job_id"))
 
         input_key = payload.get("input_key")
         if not input_key:
@@ -427,7 +455,8 @@ def process_job(payload: dict[str, Any], client: redis.Redis | None = None) -> N
             result_source = find_latest_theta_exp(result_dir, dataset, args["model_size"])
         else:
             result_source = find_baseline_exp(result_dir, username, dataset, model, run_id)
-        uploaded = upload_tree(result_source, output_prefix)
+        uploaded = upload_tree(result_source, output_prefix, client, payload.get("job_id"))
+        ensure_not_cancelled(client, payload.get("job_id"))
         write_training_log(
             output_prefix,
             "succeeded",
@@ -457,6 +486,11 @@ def process_job(payload: dict[str, Any], client: redis.Redis | None = None) -> N
         callback(payload, "failed", message)
         raise
     finally:
+        if client is not None and payload.get("job_id") not in {None, ""}:
+            try:
+                client.delete(cancel_key(payload.get("job_id")))
+            except redis.exceptions.RedisError as exc:
+                print(f"[job {payload.get('job_id')}] failed to clear cancel flag: {exc}", flush=True)
         if KEEP_WORKDIR:
             print(f"[job {payload.get('job_id')}] work dir kept: {work_dir}", flush=True)
         else:

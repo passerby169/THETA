@@ -63,9 +63,11 @@ interface AutoPipelineProps {
   /** 已有的 task_id，用于项目重新进入时恢复进度 */
   initialTaskId?: string | null
   /** 当前流水线状态: draft = 已上传但未开始训练 */
-  pipelineStatus?: "running" | "completed" | "error" | "draft"
+  pipelineStatus?: "running" | "completed" | "error" | "cancelled" | "draft"
   onComplete?: (result: PipelineResult) => void
   onError?: (error: string) => void
+  onCancelled?: () => void
+  onRestart?: () => void
   /** 上传完成时回调（dataset_name 来自后端），用于同步到数据库 */
   onUploadComplete?: (datasetName: string) => void
   /** 训练任务创建后回调，用于将 task_id 保存到项目数据库 */
@@ -190,6 +192,8 @@ export function AutoPipeline({
   pipelineStatus,
   onComplete,
   onError,
+  onCancelled,
+  onRestart,
   onUploadComplete,
   onTaskCreated,
   onConfigConfirmed,
@@ -199,7 +203,7 @@ export function AutoPipeline({
 
   const [steps, setSteps] = useState<PipelineStep[]>(createInitialSteps())
   const [overallProgress, setOverallProgress] = useState(0)
-  const [status, setStatus] = useState<"upload" | "column_select" | "config" | "running" | "completed" | "error">("upload")
+  const [status, setStatus] = useState<"upload" | "column_select" | "config" | "running" | "completed" | "error" | "cancelled">("upload")
   const [taskId, setTaskId] = useState<string | null>(null)
   const [showLogs, setShowLogs] = useState(true)
   const [logs, setLogs] = useState<string[]>([])
@@ -235,6 +239,20 @@ export function AutoPipeline({
   const [dlcRemainingSeconds, setDlcRemainingSeconds] = useState(0)
   const dlcCountdownRef = useRef<NodeJS.Timeout | null>(null)
   const externalStartedAtRef = useRef<number | null>(null)
+  const ignoredInitialTaskIdRef = useRef<string | null>(null)
+
+  const clearRuntimeTimers = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current)
+      pollingRef.current = null
+    }
+    if (dlcCountdownRef.current) {
+      clearInterval(dlcCountdownRef.current)
+      dlcCountdownRef.current = null
+    }
+    externalStartedAtRef.current = null
+    setIsDlcActive(false)
+  }, [])
   /** 上传是否正在进行中（用于参数面板提前弹出时等待上传完成） */
   const uploadInProgressRef = useRef(false)
   /** 用户在参数面板确认的配置（上传未完成时暂存，等待上传完成后启动流水线） */
@@ -271,12 +289,11 @@ export function AutoPipeline({
   /** 清理训练计时器 */
   useEffect(() => {
     return () => {
-      if (dlcCountdownRef.current) {
-        clearInterval(dlcCountdownRef.current)
-      }
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current)
-      }
+      if (pollingRef.current) clearInterval(pollingRef.current)
+      if (dlcCountdownRef.current) clearInterval(dlcCountdownRef.current)
+      pollingRef.current = null
+      dlcCountdownRef.current = null
+      externalStartedAtRef.current = null
     }
   }, [])
 
@@ -327,7 +344,7 @@ export function AutoPipeline({
       return
     }
 
-    if (!initialTaskId) return
+    if (!initialTaskId || ignoredInitialTaskIdRef.current === initialTaskId) return
     let cancelled = false
 
     const restoreTask = async () => {
@@ -362,6 +379,21 @@ export function AutoPipeline({
           setResult(pipelineResult)
           addLog("✅ 训练已完成")
           onComplete?.(pipelineResult)
+          return
+        }
+
+        if (task.status === "cancelled") {
+          const message = task.error_message || "训练已停止"
+          clearRuntimeTimers()
+          setStatus("cancelled")
+          setEndTime(new Date())
+          setSteps(prev => prev.map(step =>
+            step.status === "running"
+              ? { ...step, status: "skipped" as const, progress: 0, message }
+              : step
+          ))
+          addLog(`⏹ ${message}`)
+          onCancelled?.()
           return
         }
 
@@ -835,25 +867,16 @@ export function AutoPipeline({
         }
         if (task.status === "cancelled") {
           const message = task.error_message || "训练已停止"
-          setStatus("error")
+          clearRuntimeTimers()
+          setStatus("cancelled")
           setEndTime(new Date())
-          setIsDlcActive(false)
           setSteps(prev =>
             prev.map(step =>
-              step.status === "running" ? { ...step, status: "error" as const, progress: 0, message } : step
+              step.status === "running" ? { ...step, status: "skipped" as const, progress: 0, message } : step
             )
           )
-          addLog(`⏹️ ${message}`)
-          onError?.(message)
-          if (pollingRef.current) {
-            clearInterval(pollingRef.current)
-            pollingRef.current = null
-          }
-          if (dlcCountdownRef.current) {
-            clearInterval(dlcCountdownRef.current)
-            dlcCountdownRef.current = null
-          }
-          externalStartedAtRef.current = null
+          addLog(`⏹ ${message}`)
+          onCancelled?.()
           return
         }
         if (task.status === "failed" || task.status === "error") {
@@ -881,7 +904,7 @@ export function AutoPipeline({
         console.error("Poll task error:", error)
       }
     },
-    [addLog, onComplete, onError, startExternalTrainingTimer, startTime]
+    [addLog, clearRuntimeTimers, onCancelled, onComplete, onError, startExternalTrainingTimer, startTime]
   )
 
   const handleUploadSubmit = async () => {
@@ -997,6 +1020,8 @@ export function AutoPipeline({
   }
 
   const handleRetry = () => {
+    clearRuntimeTimers()
+    ignoredInitialTaskIdRef.current = taskId || initialTaskId || null
     pipelineStarted.current = false
     hasUploaded.current = false
     pipelineDatasetRef.current = ""
@@ -1019,35 +1044,30 @@ export function AutoPipeline({
     setPendingJobIdForConfig(null)
     setColumnSelection(null)
     columnPanelShown.current = false
+    onRestart?.()
   }
 
   const handleCancelTraining = useCallback(async () => {
     if (!taskId || isCancelling) return
     setIsCancelling(true)
     try {
-      await BackendAPI.cancelTraining(parseInt(taskId, 10))
-      addLog("⏹️ 已发送停止训练请求")
-      setStatus("error")
-      setIsDlcActive(false)
+      const response = await BackendAPI.cancelTraining(parseInt(taskId, 10))
+      if (!response.success || response.status !== "cancelled") {
+        throw new Error(response.message || "后端未确认停止训练")
+      }
+      addLog("⏹ 已停止训练，可重新开始")
+      clearRuntimeTimers()
+      setStatus("cancelled")
       setEndTime(new Date())
-      updateStep("training", { status: "error", progress: 0, message: "训练已停止" })
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current)
-        pollingRef.current = null
-      }
-      if (dlcCountdownRef.current) {
-        clearInterval(dlcCountdownRef.current)
-        dlcCountdownRef.current = null
-      }
-      externalStartedAtRef.current = null
-      onError?.("训练已停止")
+      updateStep("training", { status: "skipped", progress: 0, message: "训练已停止" })
+      onCancelled?.()
     } catch (error) {
       const message = error instanceof Error ? error.message : "停止训练失败"
       addLog(`❌ 停止训练失败: ${message}`)
     } finally {
       setIsCancelling(false)
     }
-  }, [addLog, isCancelling, onError, taskId, updateStep])
+  }, [addLog, clearRuntimeTimers, isCancelling, onCancelled, taskId, updateStep])
 
   const handleColumnSelectConfirm = useCallback((selection: ColumnSelection) => {
     setColumnSelection(selection)
@@ -1109,6 +1129,7 @@ export function AutoPipeline({
     const isActive = step.status === "running"
     const isCompleted = step.status === "completed"
     const isError = step.status === "error"
+    const isSkipped = step.status === "skipped"
 
     return (
       <div key={step.id} className="flex items-center shrink-0">
@@ -1126,6 +1147,7 @@ export function AutoPipeline({
             isActive && "bg-blue-100 text-blue-700 ring-1 ring-blue-200",
             isCompleted && "bg-green-50 text-green-700",
             isError && "bg-red-50 text-red-700",
+            isSkipped && "bg-amber-50 text-amber-700",
             step.status === "waiting" && "bg-slate-100 text-slate-500"
           )}
           title={step.message}
@@ -1160,7 +1182,8 @@ export function AutoPipeline({
               status === "config" && "bg-violet-100 text-violet-700",
               status === "running" && "bg-blue-100 text-blue-700",
               status === "completed" && "bg-green-100 text-green-700",
-              status === "error" && "bg-red-100 text-red-700"
+              status === "error" && "bg-red-100 text-red-700",
+              status === "cancelled" && "bg-amber-100 text-amber-700"
             )}
           >
             {status === "upload" && "请上传数据"}
@@ -1169,6 +1192,7 @@ export function AutoPipeline({
             {status === "running" && "分析中..."}
             {status === "completed" && "已完成"}
             {status === "error" && "出错"}
+            {status === "cancelled" && "已停止"}
           </Badge>
         </div>
         <p className="text-slate-500">
@@ -1364,7 +1388,25 @@ export function AutoPipeline({
                 </div>
                 <Button onClick={handleRetry} className="mt-3 w-full" variant="outline">
                   <RefreshCw className="w-4 h-4 mr-2" />
-                  重试
+                  重新开始
+                </Button>
+              </div>
+            )}
+
+            {status === "cancelled" && (
+              <div className="mb-4">
+                <div className="p-4 bg-amber-50 rounded-xl border border-amber-200">
+                  <div className="flex items-start gap-3">
+                    <Square className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium text-amber-800">训练已停止</p>
+                      <p className="text-sm text-amber-700 mt-1">本次任务不会继续运行，可以复用当前数据集并开始新的训练。</p>
+                    </div>
+                  </div>
+                </div>
+                <Button onClick={handleRetry} className="mt-3 w-full" variant="outline">
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  重新开始
                 </Button>
               </div>
             )}

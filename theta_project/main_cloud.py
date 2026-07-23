@@ -886,18 +886,21 @@ def training_cancel_key(job_id: int) -> str:
 def set_training_cancel_flag(job_id: int) -> None:
     redis_url = os.getenv("REDIS_URL")
     if not redis_url:
-        return
+        raise RuntimeError("REDIS_URL is required to stop an external training job")
+    ttl = int(os.getenv("TRAINING_CANCEL_TTL_SECONDS", "86400"))
+    client = redis.from_url(
+        redis_url,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+    )
+    key = training_cancel_key(job_id)
     try:
-        ttl = int(os.getenv("TRAINING_CANCEL_TTL_SECONDS", "86400"))
-        client = redis.from_url(
-            redis_url,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-        )
-        client.setex(training_cancel_key(job_id), ttl, "1")
-    except Exception as exc:
-        print(f"[cancel] failed to write Redis cancel flag for job {job_id}: {exc}")
+        client.setex(key, ttl, "1")
+        if client.get(key) != "1":
+            raise RuntimeError("Redis did not persist the cancellation flag")
+    finally:
+        client.close()
 
 
 TERMINAL_TRAINING_STATUSES = {"succeeded", "failed", "cancelled"}
@@ -968,7 +971,11 @@ def cancel_training(job_id: int, current_user: User = Depends(get_current_user),
     if job.status in {"succeeded", "failed", "cancelled"}:
         return {"success": True, "message": f"Job already {job.status}", "status": job.status}
 
-    set_training_cancel_flag(job.id)
+    try:
+        set_training_cancel_flag(job.id)
+    except Exception as exc:
+        print(f"[cancel] failed to write Redis cancel flag for job {job.id}: {exc}")
+        raise HTTPException(status_code=503, detail=f"Unable to stop training worker: {exc}") from exc
     job.status = "cancelled"
     job.error_message = "训练已由用户终止"
     db.commit()
@@ -1061,7 +1068,7 @@ def training_callback(request: dict, db: Session = Depends(get_db)):
     status_value = request.get("status")
     if status_value not in {"running", "succeeded", "failed", "cancelled"}:
         raise HTTPException(status_code=400, detail="Invalid status")
-    if job.status == "cancelled" and status_value in {"running", "succeeded"}:
+    if job.status == "cancelled" and status_value != "cancelled":
         return {"success": True, "message": f"Job {job.id} remains cancelled"}
     job.status = status_value
     job.run_id = request.get("run_id") or job.run_id
