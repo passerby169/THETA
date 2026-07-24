@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0.0",
+  "repository": "https://github.com/CodeSoul-co/Hypha.git",
+  "branch": "dev-domain-merge",
+  "commit": "dfb787ceed7d3c525fb39909142af7d1b5106c41",
+  "requiredPackages": [
+    "@hypha/core",
+    "@hypha/domain",
+    "@hypha/fsm",
+    "@hypha/tools",
+    "@hypha/adapters-local",
+    "@hypha/harness"
+  ],
+  "packageVersions": {
+    "@hypha/core": "0.0.0",
+    "@hypha/domain": "0.0.0",
+    "@hypha/fsm": "0.0.0",
+    "@hypha/tools": "0.0.0",
+    "@hypha/adapters-local": "0.0.0",
+    "@hypha/harness": "0.0.0"
+  }
+}
