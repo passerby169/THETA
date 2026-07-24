@@ -1,7 +1,10 @@
 import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ToolCallContext } from "./hypha-compatible.js";
+export interface BridgeCallContext {
+  runId: string;
+  stepId: string;
+}
 
 export interface BridgeResponse {
   status: "ok" | "error";
@@ -23,7 +26,7 @@ const bridgeRoot = (): string => {
 export const callThetaBridge = async (
   command: string,
   input: unknown,
-  context: ToolCallContext
+  context: BridgeCallContext
 ): Promise<BridgeResponse> => {
   const cwd = bridgeRoot();
   const python = process.env.THETA_AGENT_BRIDGE_PYTHON || "python";

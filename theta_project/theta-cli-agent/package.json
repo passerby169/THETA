@@ -11,7 +11,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "hypha:check": "node ../scripts/check-hypha-version.mjs",
     "hypha:build": "npm --prefix ../Hypha run build:packages",
-    "smoke:hypha-import": "node dist/hypha-import-smoke.js"
+    "smoke:hypha-import": "node dist/hypha-import-smoke.js",
+    "smoke:hypha-registry": "node dist/hypha-registry-smoke.js"
   },
   "dependencies": {
     "ajv": "^8.20.0",
