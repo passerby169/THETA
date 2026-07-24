@@ -16,7 +16,8 @@
     "smoke:hypha-runner": "node dist/hypha-runner-smoke.js",
     "smoke:hypha-model-recommend": "node dist/hypha-model-recommend-smoke.js",
     "smoke:hypha-plan-validate": "node dist/hypha-plan-validate-smoke.js",
-    "smoke:hypha-plan-create-approval": "node dist/hypha-plan-create-approval-smoke.js"
+    "smoke:hypha-plan-create-approval": "node dist/hypha-plan-create-approval-smoke.js",
+    "smoke:hypha-plan-create-approved": "node dist/hypha-plan-create-approved-smoke.js"
   },
   "dependencies": {
     "ajv": "^8.20.0",
